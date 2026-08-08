@@ -1,3 +1,4 @@
+<img width="1122" height="1224" alt="Screenshot From 2026-08-08 14-23-00" src="https://github.com/user-attachments/assets/fad9058d-0653-4a90-be57-a2ea60d3c4cd" />
 # Manual Model Benchmark Prompt Suite
 
 A practical, manual benchmarking suite for testing local and hosted LLMs through real prompts rather than a backend benchmark runner.

@@ -1,3 +1,4 @@
+<img width="2544" height="1309" alt="Screenshot From 2026-08-08 13-59-19" src="https://github.com/user-attachments/assets/abc744d0-0eaa-495e-8b1f-9ade790a82d0" />
 # llama-live dashboard
 
 `llama-live.html` is a read-only monitoring dashboard for a Linux inference host running **llama-swap and llama.cpp**. It combines model-fleet state, live inference performance, GPU telemetry, host health, and per-model token history in one browser view.

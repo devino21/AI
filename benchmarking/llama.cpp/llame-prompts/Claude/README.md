@@ -1,3 +1,4 @@
+<img width="1205" height="1226" alt="Screenshot From 2026-08-08 14-30-14" src="https://github.com/user-attachments/assets/30d9e226-8a2e-4b0f-919b-7d598501a424" />
 # agentbench/45
 
 A manual, agent-driven mirror of fleetbench. 45 prompts across 9 categories,

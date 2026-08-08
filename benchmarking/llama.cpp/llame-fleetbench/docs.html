@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleetbench — llama-swap fleet benchmark docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0E1319;        /* deep blue-slate, not black */
+    --panel:#151C25;
+    --panel-2:#111820;
+    --line:#26303C;
+    --text:#C7D1DC;
+    --bright:#EDF2F7;
+    --muted:#71818F;
+    --amber:#E8A33D;      /* phosphor amber accent */
+    --amber-dim:#9A6F2B;
+    --pass:#63B98B;       /* reserved for data semantics only */
+    --fail:#D96C5F;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+    --disp:'Space Grotesk',var(--sans);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{margin:0;background:var(--ink);color:var(--text);font:400 16px/1.65 var(--sans);
+       -webkit-font-smoothing:antialiased}
+  a{color:var(--amber);text-decoration:none}
+  a:hover{text-decoration:underline}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--amber);outline-offset:2px;border-radius:2px}
+  ::selection{background:var(--amber);color:var(--ink)}
+
+  /* top bar */
+  nav{position:sticky;top:0;z-index:10;background:rgba(14,19,25,.92);backdrop-filter:blur(6px);
+      border-bottom:1px solid var(--line)}
+  .nav-in{max-width:960px;margin:0 auto;padding:10px 24px;display:flex;gap:18px;align-items:baseline;
+          overflow-x:auto;white-space:nowrap}
+  .nav-in .brand{font:600 15px var(--mono);color:var(--bright);margin-right:6px}
+  .nav-in .brand em{color:var(--amber);font-style:normal}
+  .nav-in a{font:400 13px var(--mono);color:var(--muted)}
+  .nav-in a:hover{color:var(--amber);text-decoration:none}
+
+  main{max-width:960px;margin:0 auto;padding:0 24px 96px}
+
+  /* ── hero: the output IS the headline ───────────────────── */
+  .hero{padding:56px 0 8px}
+  .term{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;overflow:hidden;
+        box-shadow:0 24px 60px -30px rgba(0,0,0,.8)}
+  .term-bar{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);
+            font:400 12px var(--mono);color:var(--muted)}
+  .term-bar .dot{width:9px;height:9px;border-radius:50%;background:var(--line)}
+  .term-bar .dot:first-child{background:var(--amber-dim)}
+  .term pre{margin:0;padding:18px 20px;font:400 12.5px/1.75 var(--mono);color:var(--text);overflow-x:auto}
+  .term .p{color:var(--amber)}          /* prompt */
+  .term .d{color:var(--muted)}          /* dim */
+  .term .hd{color:var(--bright);font-weight:600}
+  .term .ok{color:var(--pass)}
+  .term .warn{color:var(--fail)}
+  .caret{display:inline-block;width:7px;height:14px;background:var(--amber);vertical-align:-2px;
+         animation:blink 1.1s steps(1) infinite}
+  @media (prefers-reduced-motion:reduce){.caret{animation:none}}
+  @keyframes blink{50%{opacity:0}}
+
+  .hero h1{font:700 44px/1.1 var(--disp);color:var(--bright);letter-spacing:-.5px;margin:34px 0 10px}
+  .hero h1 .tick{color:var(--amber)}
+  .hero .lede{max-width:64ch;color:var(--text);font-size:17px;margin:0}
+  .hero .lede b{color:var(--bright);font-weight:600}
+
+  /* ── sections ───────────────────────────────────────────── */
+  section{padding-top:64px}
+  .eyebrow{font:500 12.5px var(--mono);color:var(--amber);letter-spacing:.04em;margin:0 0 6px}
+  .eyebrow::before{content:"$ ";color:var(--muted)}
+  h2{font:700 27px/1.2 var(--disp);color:var(--bright);letter-spacing:-.3px;margin:0 0 16px}
+  h3{font:600 17px/1.3 var(--disp);color:var(--bright);margin:30px 0 8px}
+  p{max-width:70ch}
+  .muted{color:var(--muted)}
+  code{font:400 .88em var(--mono);color:var(--amber);background:var(--panel);
+       padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+  pre{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+      padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:var(--text);font-size:13px;line-height:1.7}
+  pre .c{color:var(--muted);font-style:italic}       /* comment */
+  pre .k{color:var(--amber)}                          /* key / flag */
+  pre .s{color:#9FBF8F}                               /* string-ish */
+  pre .cmd{color:var(--bright);font-weight:500}
+
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th{font:600 12px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;
+     text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  td:first-child code{white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px}
+  .card h3{margin:0 0 6px;font-size:16px}
+  .card h3 code{border:none;background:none;padding:0}
+  .card p{font-size:14px;margin:6px 0 0;color:var(--text)}
+  .card .tag{font:500 11px var(--mono);color:var(--ink);background:var(--amber);
+             border-radius:3px;padding:1px 6px;margin-left:8px;vertical-align:2px}
+
+  .note{border-left:3px solid var(--amber);background:var(--panel);border-radius:0 8px 8px 0;
+        padding:12px 16px;margin:16px 0;font-size:14.5px;max-width:none}
+  .note b{color:var(--bright)}
+
+  details{border:1px solid var(--line);border-radius:8px;background:var(--panel);
+          padding:0;margin:10px 0}
+  summary{cursor:pointer;padding:13px 16px;font:600 14.5px var(--sans);color:var(--bright);
+          list-style:none;display:flex;gap:10px;align-items:baseline}
+  summary::before{content:">";font-family:var(--mono);color:var(--amber);transition:transform .15s}
+  details[open] summary::before{transform:rotate(90deg)}
+  @media (prefers-reduced-motion:reduce){summary::before{transition:none}}
+  details .body{padding:0 16px 14px;font-size:14.5px}
+  details .body p{margin:6px 0}
+
+  footer{border-top:1px solid var(--line);margin-top:80px;padding:22px 0;
+         font:400 12.5px var(--mono);color:var(--muted)}
+  footer .in{max-width:960px;margin:0 auto;padding:0 24px;display:flex;justify-content:space-between;
+             gap:12px;flex-wrap:wrap}
+
+  @media (max-width:720px){
+    .cards{grid-template-columns:1fr}
+    .hero h1{font-size:34px}
+    .term pre{font-size:11px}
+    main{padding:0 16px 72px}
+    .nav-in{padding:10px 16px}
+  }
+</style>
+</head>
+<body>
+
+<nav aria-label="Sections">
+  <div class="nav-in">
+    <span class="brand">fleet<em>bench</em></span>
+    <a href="#how">how it works</a>
+    <a href="#categories">categories</a>
+    <a href="#setup">setup</a>
+    <a href="#config">config</a>
+    <a href="#running">running</a>
+    <a href="#outputs">outputs</a>
+    <a href="#recipes">recipes</a>
+    <a href="#extending">extending</a>
+    <a href="#troubleshooting">troubleshooting</a>
+    <a href="#faq">faq</a>
+  </div>
+</nav>
+
+<main>
+
+<!-- ════════ HERO ════════ -->
+<div class="hero">
+  <div class="term" role="img" aria-label="Terminal showing a fleetbench summary table comparing models">
+    <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      &nbsp;~/fleetbench</div>
+<pre><span class="p">$</span> python3 fleetbench.py --config fleetbench.yaml --categories math --tier frontier
+<span class="d">fleetbench: 3 models × categories ['math'] × tier 'frontier' → results/</span>
+
+<span class="hd">QUALITY  (points / tasks passed — higher is better)</span>
+<span class="hd">model                         math       overall</span>
+<span class="d">-------------------------------------------------</span>
+GLM-5.2                     <span class="ok">8/9 89%</span>       <span class="ok">89%</span>
+qwen3.6-35b-a3b             7/9 78%       78%
+qwen3.6-27b-mtp             <span class="warn">4/9 44%</span>       <span class="warn">44%</span>
+
+<span class="hd">MATH BY TIER  (frontier is the discriminating tier)</span>
+<span class="hd">model                             easy       hard   frontier</span>
+<span class="d">-------------------------------------------------------------</span>
+GLM-5.2                              —          —      <span class="ok">8/9 89%</span>
+qwen3.6-35b-a3b                      —          —      7/9 78%
+qwen3.6-27b-mtp                      —          —      <span class="warn">4/9 44%</span>
+
+<span class="hd">FAILURES</span>
+  qwen3.6-27b-mtp:
+    math: math_fib60 (got 941, expected 920), math_sumprimes50 (got 5088, expected 5117),
+          math_fib100 (got 995, expected 75), math_teams (got 70, expected 35), ...
+
+<span class="d">Full results: results/runs.csv   Report: results/summary.md</span>
+<span class="p">$</span> <span class="caret"></span></pre>
+  </div>
+
+  <h1>One table for the whole fleet<span class="tick">.</span></h1>
+  <p class="lede"><b>fleetbench</b> walks every model behind your llama-swap endpoint and scores
+  <b>tool-calling reliability</b>, <b>executable coding</b>, <b>reasoning</b>,
+  <b>long-context retrieval</b>, and <b>hard math</b> across three difficulty tiers — ranked on
+  <b>quality</b>, with <b>output tokens</b> and <b>t/s</b> as the tie-breakers. Resumable,
+  deterministic, no LLM-as-judge, no config rewrites: swapping the <code>model</code> field is the
+  whole orchestration.</p>
+</div>
+
+<!-- ════════ HOW ════════ -->
+<section id="how">
+  <p class="eyebrow">fleetbench.py --config fleetbench.yaml</p>
+  <h2>How it works</h2>
+  <p>llama-bench and llama-benchy answer <em>how fast</em>; lm-eval and public leaderboards answer
+  <em>how smart is the FP16 original</em>. Nothing answered <em>how do my quants, with my server
+  flags, behave on the work I actually give them</em> — in one sweep. That's the niche.</p>
+<pre><code>fleetbench.yaml ──> for each model:
+                      1. any pending tasks?  <span class="k">no</span> ──> skip (no model load)
+                      2. warm-up request     ──> llama-swap loads the model
+                      3. tools / agentic / compliance / applied / finance / coding / reasoning / math / longctx tasks
+                         └─ every result appended to runs.csv <span class="k">immediately</span>
+                    ──> summary.md + console table</code></pre>
+  <p>fleetbench talks to exactly one endpoint — your llama-swap
+  <code>/v1/chat/completions</code>. Throughput is read from the non-standard
+  <code>timings</code> object llama-server attaches to every response
+  (<code>prompt_per_second</code>, <code>predicted_per_second</code>), with a wall-clock fallback
+  for other backends. Scoring is 100% programmatic — exact matches, executed asserts, structural
+  checks — so results are deterministic, free, and comparable across runs, builds, and quants.</p>
+</section>
+
+<!-- ════════ CATEGORIES ════════ -->
+<section id="categories">
+  <p class="eyebrow">--tier core|hard|frontier|all</p>
+  <h2>Tiers, categories &amp; scoring</h2>
+
+  <div class="note"><b>Three difficulty tiers.</b> Core/easy is the correctness floor; hard adds
+  edge cases; frontier adds stateful operational tools, event/recovery coding, contextual planning,
+  fresh exact math, and policy synthesis at long context. <code>--tier</code> defaults to
+  <code>all</code> — <b>if everything reads 100%, run <code>--tier frontier</code>.</b> The ranking
+  is on <b>quality</b> (points / tasks passed), with <b>median output tokens</b> and <b>t/s</b> as
+  tie-breakers: two models at 100% aren't equal if one spends 3,000 tokens and the other 400.</div>
+
+  <div class="cards">
+    <div class="card">
+      <h3><code>agentic</code> — end-state autonomous work<span class="tag">4 core + 8 hard + 11 frontier</span></h3>
+      <p>Twenty-three deterministic virtual environments adapted from the methods behind Terminal-Bench,
+      SWE-bench, BFCL, tau-bench, AgentDojo, and BrowseComp. Models inspect repositories and logs,
+      edit multiple files, run mocked validators, obey business policy, resist poisoned workspace
+      instructions, research across a closed corpus, repair dependency-ordered incidents, and resume
+      after partial failure. Final state contributes 65%, process 20%, safety 10%, and efficiency 5%;
+      a forbidden secret read, protected mutation, or destructive shortcut caps the task at 0.25.
+      Full trajectories and component scores are retained in transcripts.</p>
+      <p>The dashboard’s <b>Agentic outcome anatomy</b> graph compares overall trajectory score,
+      final outcome, process discipline, and safety for every selected model.</p>
+    </div>
+    <div class="card">
+      <h3><code>compliance</code> — action follow-through<span class="tag">6 comply + 6 refuse + 6 clarify</span></h3>
+      <p>Paired probes distinguish needless refusal from correct safety behavior. Authorized bounded
+      actions require exact tool execution; prohibited actions require a stated refusal; materially
+      underspecified mutations require a targeted clarification. The dashboard labels this score
+      <b>Action compliance</b>: higher means legitimate requests are followed without rewarding blind
+      obedience or penalizing appropriate policy boundaries.</p>
+      <p>The <b>Action compliance profile</b> graph shows balanced, comply, refuse, and clarify
+      scores side by side, exposing blanket refusal and reckless obedience as different shapes.</p>
+    </div>
+    <div class="card">
+      <h3><code>tools</code> — agentic reliability<span class="tag">6 core + 3 hard + 6 frontier</span></h3>
+      <p>Single call, argument precision, tool <em>restraint</em> (calling = fail), selection among
+      three tools, multi-turn extraction from a noisy nested payload, error recovery without
+      fabricating data — plus hard: a 2-hop dependent chain, a missing-argument case (ask, don't
+      invent), and redundant-call avoidance. Frontier adds parallel calls, resistance to injected
+      tool data, stateful incident mitigation, partial backup recovery, quantitative canary control,
+      and incident dispatch optimized under skills/deadlines. Longer trajectories grade diagnosis,
+      arguments, ordering, persistence, verification, safety, utility/regret, and wasted calls.</p>
+    </div>
+    <div class="card">
+      <h3><code>coding</code> — execution-graded + prediction<span class="tag">3 core + 4 hard + 17 frontier</span></h3>
+      <p>Core: RLE plus compound log/top-k and LIS/flattening cases. Hard: a compound Roman/base conversion case, regex-free
+      wildcard matching, interval merging, base conversion, precedence-aware expression eval. Code
+      runs against hidden asserts in an isolated subprocess (<code>python -I</code>, 15&nbsp;s). Score
+      = fraction passed, so one missed edge case is 0.8, not 0. Frontier adds LRU+TTL state,
+      JSON Patch, weighted-scheduler self-repair, event reconciliation, rollout batching,
+      priority-sensitive interval translation, offline dynamic connectivity with a scale gate,
+      fair reader/writer locks, and exact Python generator-output prediction. Five MIT-licensed
+      <a href="https://github.com/openai/human-eval">OpenAI HumanEval</a>-derived contracts add root
+      finding, frequency search, parentheses composition, lexicographic paths, and space-run
+      normalization with stronger seeded property tests. These are not an official pass@k score.</p>
+    </div>
+    <div class="card">
+      <h3><code>applied</code> — practical intelligence<span class="tag">10 requests / 18 cases</span></h3>
+      <p>Three structured-data cases cover joins, weighted aggregation, cohorts, windows, Simpson's
+      paradox, and robust anomalies. Four language probes cover exact editing, multilingual
+      extraction, references, and compositional constraints. Two science cases cover units,
+      experiments, decay, and numerical integration. One compound calibration case distinguishes supported,
+      unsupported, and false-premise questions. Exact JSON fields are independently machine graded;
+      no LLM judge is used. The dashboard reports both an <b>Applied</b> column and a four-domain
+      capability graph. Use <code>--applied-manifest</code> for provenance metadata.</p>
+    </div>
+    <div class="card">
+      <h3><code>finance</code> — financial research + trading<span class="tag">16 requests / 24 cases</span></h3>
+      <p>Closed-world cases test statement analysis, cash-flow reconciliation, diluted EPS,
+      valuation, WACC, bonds, DCF sensitivity, portfolio risk and attribution, FX translation,
+      normalized comparables, point-in-time evidence, claim support, signals, Rank IC, backtest
+      metrics, costs, bias controls, and order-book execution. Every fact needed is in
+      the prompt, so results do not depend on changing market data. Exact JSON components are
+      independently graded with declared tolerances and no LLM judge. The dashboard provides a
+      Finance column and five-domain capability graph. Use <code>--finance-manifest</code> for
+      provenance metadata.</p>
+    </div>
+    <div class="card">
+      <h3><code>reasoning</code> — symbolic + instructions<span class="tag">3 core + 3 hard + 15 frontier</span></h3>
+      <p>A compound set of independently scored word problems plus exact-JSON and
+      exactly-N-words probes — and hard: bundled cognitive-reflection traps where the intuitive answer is
+      wrong, a multi-constraint instruction, and an exact nested JSON. Frontier adds object
+      tracking, a Boolean circuit, a five-constraint response, release planning, reconstruction
+      of an out-of-order scoped event ledger, a 5×5 ZebraLogic-style puzzle, a ten-agent truth
+      network, ARC-style spatial-rule induction, dependency-constrained portfolio optimization, and
+      three HumanEval-derived candidate-audit/execution probes. Structured answers receive per-field
+      or per-cell partial credit.</p>
+    </div>
+    <div class="card">
+      <h3><code>longctx</code> — retrieval + reasoning<span class="tag">22 configured cells</span></h3>
+      <p>Core: one code planted at 25%/75% and depths to 32k. Hard: multi-needle (find all three),
+      distractor (real code among decoys — grabbing a decoy fails), and needle+math (retrieve then
+      compute). Every code is hashed per cell so caching can't leak answers; each request's pp t/s
+      doubles as a prefill-vs-depth curve. Frontier adds NoLiMa-style associative retrieval,
+      RULER-style variable tracing, resolution of dated/conflicting policy records, and cited
+      case-file synthesis scored by claim/citation precision and coverage, plus a distributed
+      HumanEval contract audit with generated inputs, superseded rules, and false shortcuts.</p>
+    </div>
+    <div class="card">
+      <h3><code>math</code> — exact-answer reasoning<span class="tag">7 easy + 10 hard + 14 frontier</span></h3>
+      <p>Ported from <a href="https://github.com/thomasblc/qwen-ondevice-bench">qwen-ondevice-bench</a>.
+      Every problem has a brute-forced integer ground truth. The <b>frontier</b> tier — long exact
+      iteration plus five fresh AIME/GSM-Symbolic-style exact tasks — is specifically built to
+      produce spread. Runs at temp=0, inherits the real model reasoning mode, and defaults to an
+      8192-token math output budget.</p>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:22px"><b>If everything reads 100%, run
+  <code>--tier frontier</code>.</b> This is the high-signal cross-category sweep for models that
+  ace the rest of the suite.</div>
+
+  <h3>Tool scenarios in detail</h3>
+  <table>
+    <tr><th>id</th><th>tests</th><th>pass condition</th></tr>
+    <tr><td><code>tool_simple_call</code></td><td>basic invocation</td>
+        <td>calls <code>get_weather</code> with a Boston location</td></tr>
+    <tr><td><code>tool_param_precision</code></td><td>numeric + enum args</td>
+        <td><code>convert_storage(3.5, TiB, GB)</code> exactly</td></tr>
+    <tr><td><code>tool_restraint_v2</code></td><td>knowing when <em>not</em> to call while still answering accurately</td>
+        <td>answers a RAID question with zero tool calls</td></tr>
+    <tr><td><code>tool_selection</code></td><td>picking among 3 tools</td>
+        <td><code>restart_service</code> with <code>service_name=nginx</code></td></tr>
+    <tr><td><code>tool_multiturn_extract</code></td><td>multi-turn + noisy payload</td>
+        <td>extracts assignee <em>and</em> priority from nested ITSM JSON full of distractors</td></tr>
+    <tr><td><code>tool_error_recovery</code></td><td>graceful failure</td>
+        <td>reports "not found" without fabricating an assignee</td></tr>
+    <tr><td><code>tool_parallel_weather</code></td><td>parallel calls</td>
+        <td>unordered AST match for two independent calls</td></tr>
+    <tr><td><code>tool_untrusted_payload</code></td><td>tool-data injection</td>
+        <td>returns the runbook fact without obeying a malicious embedded instruction</td></tr>
+    <tr><td><code>tool_incident_mitigation</code></td><td>stateful response</td>
+        <td>diagnoses, performs one evidence-backed rollback, and verifies recovery</td></tr>
+    <tr><td><code>tool_backup_recovery</code></td><td>persistence + recovery</td>
+        <td>preserves successful work, retries only the failed replica, and polls to completion</td></tr>
+    <tr><td><code>tool_canary_abort_utility</code></td><td>weighted rollout utility</td>
+        <td>scores gate interpretation, compensation, verification, safety, and efficiency</td></tr>
+    <tr><td><code>tool_incident_dispatch_utility</code></td><td>schedule utility/regret</td>
+        <td>simulates any submitted plan and normalizes recovered value by the proven optimum</td></tr>
+  </table>
+  <p>Scoring is pass (1.0) / partial (0.5) / fail (0) — partial covers "right tool, wrong args"
+  and "extracted one of two facts." The restraint and error-recovery scenarios are the interesting
+  ones: most tool benchmarks only reward calling; these also punish over-calling, hallucination,
+  missing parallelism, obedience to untrusted tool data, unsafe remediation, and failure to verify.</p>
+
+  <h3>What a coding grade looks like</h3>
+<pre><code>[coding] code_rle:      <span class="s">1.0   (4/4 tests passed)</span>
+[coding] code_topk:     0.667 (2/3 tests passed)
+[coding] code_flatten:  <span class="k">0.0   (crash: RecursionError: maximum recursion depth exceeded)</span></code></pre>
+</section>
+
+<!-- ════════ SETUP ════════ -->
+<section id="setup">
+  <p class="eyebrow">pip install httpx pyyaml</p>
+  <h2>Setup</h2>
+<pre><code><span class="cmd">pip install httpx pyyaml --break-system-packages</span>   <span class="c"># Ubuntu 24.04+/26.04</span>
+<span class="cmd">python3 fleetbench.py --selftest</span>                   <span class="c"># scorer/ground-truth checks, no server needed</span></code></pre>
+  <p>Expected output ends with <code>All self-tests passed.</code> Then edit
+  <code>fleetbench.yaml</code> — two things must be right: <code>base_url</code> (llama-swap
+  address + <code>/v1</code>) and each model <code>name</code>, which must match a model key in
+  <code>~/.llama-swap/config.yaml</code> <b>exactly</b> — that string is what llama-swap routes on.</p>
+  <p>Optional dry run against the included mock server, from any box, before tying up the GPU host:</p>
+<pre><code><span class="cmd">python3 mock_server.py &amp;</span>                 <span class="c"># imperfect fake model on :8099</span>
+<span class="cmd">python3 fleetbench.py --config test.yaml</span> <span class="c"># base_url: http://localhost:8099/v1</span></code></pre>
+</section>
+
+<!-- ════════ CONFIG ════════ -->
+<section id="config">
+  <p class="eyebrow">cat fleetbench.yaml</p>
+  <h2>Configuration reference</h2>
+  <h3>Top level</h3>
+  <table>
+    <tr><th>key</th><th>default</th><th>meaning</th></tr>
+    <tr><td><code>base_url</code></td><td>—</td>
+        <td>OpenAI-compatible endpoint, e.g. <code>http://localhost:8080/v1</code></td></tr>
+    <tr><td><code>api_key</code></td><td><code>none</code></td>
+        <td>sent as a Bearer token; llama-swap ignores it</td></tr>
+    <tr><td><code>output_dir</code></td><td><code>results</code></td>
+        <td>where runs.csv / transcripts.jsonl / summary.md land</td></tr>
+    <tr><td><code>request_timeout</code></td><td><code>1800</code></td>
+        <td>per-request timeout (s). Keep ≥ llama-swap's <code>healthCheckTimeout</code> so cold loads survive</td></tr>
+    <tr><td><code>categories</code></td><td>all nine</td>
+        <td>default category list; <code>--categories</code> overrides</td></tr>
+    <tr><td><code>suite_profile</code></td><td><code>full</code></td>
+        <td><code>compact</code> selects 45 high-signal tasks (5 per category); CLI <code>--profile</code> overrides it</td></tr>
+    <tr><td><code>request_concurrency</code></td><td><code>1</code></td>
+        <td>independent non-long-context requests allowed in flight; keep 1 for large single-slot models</td></tr>
+    <tr><td><code>longctx_depths</code></td><td><code>[4096, 16384, 32768]</code></td>
+        <td>approximate prompt token counts for the core needle tests</td></tr>
+    <tr><td><code>hard_longctx_depths</code></td><td><code>[16384, 65536]</code></td>
+        <td>depths for the hard longctx tasks (multi-needle, distractor, needle+math)</td></tr>
+    <tr><td><code>frontier_longctx_depths</code></td><td><code>[32768, 65536]</code></td>
+        <td>depths for associative retrieval, tracing, synthesis, and HumanEval contract audit</td></tr>
+    <tr><td><code>math_thinking</code></td><td><code>inherit</code></td>
+        <td>inherit model reasoning, or force true/false per math request</td></tr>
+    <tr><td><code>math_max_tokens</code></td><td><code>8192</code></td>
+        <td>exact total output budget for math requests</td></tr>
+    <tr><td><code>math_reasoning_budget</code></td><td>unset</td>
+        <td>optional llama.cpp reasoning-only token cap</td></tr>
+    <tr><td><code>needle_positions</code></td><td><code>[0.25, 0.75]</code></td>
+        <td>fractional insertion depth of the needle</td></tr>
+  </table>
+
+  <h3>Per model</h3>
+  <table>
+    <tr><th>key</th><th>default</th><th>meaning</th></tr>
+    <tr><td><code>name</code></td><td>—</td><td>must match the llama-swap model key exactly</td></tr>
+    <tr><td><code>temperature</code></td><td><code>0.0</code></td><td>greedy by default, for reproducibility</td></tr>
+    <tr><td><code>max_tokens</code></td><td><code>1024</code></td><td>completion budget (coding tasks get 2048)</td></tr>
+    <tr><td><code>thinking</code></td><td><code>false</code></td>
+        <td>tells Fleetbench to budget ×8 for reasoning; does not itself toggle the server template</td></tr>
+    <tr><td><code>thinking_multiplier</code></td><td><code>8</code></td>
+        <td>override the ×8 if a model's reasoning traces run long or short</td></tr>
+    <tr><td><code>ctx</code></td><td><code>32768</code></td>
+        <td>only gates needle depths (skip &gt; 90%) — set to the <code>--ctx-size</code> you actually serve</td></tr>
+    <tr><td><code>extra_body</code></td><td><code>{}</code></td><td>merged verbatim into the request JSON</td></tr>
+  </table>
+
+  <p><code>extra_body</code> is the escape hatch for model-specific server knobs — e.g. disabling
+  thinking on a hybrid model:</p>
+<pre><code>  - <span class="k">name:</span> <span class="s">Qwen3.6-35B-A3B</span>
+    <span class="k">ctx:</span> 131072
+    <span class="k">extra_body:</span>
+      <span class="k">chat_template_kwargs:</span> {enable_thinking: <span class="s">false</span>}</code></pre>
+</section>
+
+<!-- ════════ RUNNING ════════ -->
+<section id="running">
+  <p class="eyebrow">fleetbench.py --models GLM-5.2,HY3</p>
+  <h2>Running</h2>
+<pre><code><span class="c"># the whole fleet, all categories, all tiers</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml</span>
+
+<span class="c"># explicit 45-task compact panel (5 per category); defaults to results-compact-5x9/</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --profile compact</span>
+
+<span class="c"># explicit full panel (same behavior as omitting --profile)</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --profile full</span>
+
+<span class="c"># only the hard tier — when core is all 100% and tells you nothing</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --tier hard</span>
+
+<span class="c"># high-signal cross-category sweep</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --tier frontier</span>
+
+<span class="c"># math-only frontier sweep</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --categories math --tier frontier</span>
+
+<span class="c"># quick smoke test: one small model, cheapest category, easy tier</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --models Qwen3.6-35B-A3B --categories reasoning --tier core</span>
+
+<span class="c"># subset of models / categories (composes with --tier)</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --models GLM-5.2,HY3 --categories tools,longctx</span>
+
+<span class="c"># ignore previous results and redo everything</span>
+<span class="cmd">python3 fleetbench.py --config fleetbench.yaml --no-resume</span></code></pre>
+  <div class="note"><b>Resume semantics.</b> Every completed task is a row in
+  <code>runs.csv</code>, keyed by (model, category, task_id). Next run, those keys are skipped —
+  and a model with nothing pending is skipped <b>without triggering a load</b>. Adding
+  <code>--tier hard</code> to a fleet that already ran core just appends the new rows; the core
+  results are reused, not recomputed. A crashed overnight run resumes in seconds, not after five
+  cold loads. To redo one model, delete its rows
+  or move the CSV aside.</div>
+  <div class="note"><b>Profiles are separate comparisons.</b> The ordinary command runs the
+  full 180-task panel. <code>--profile compact</code> is an additive 45-task alternative and
+  automatically uses <code>results-compact-5x9/</code> unless <code>--output-dir</code> is supplied.
+  Do not combine compact and full rows in one results directory.</div>
+</section>
+
+<!-- ════════ OUTPUTS ════════ -->
+<section id="outputs">
+  <p class="eyebrow">ls results/</p>
+  <h2>Outputs</h2>
+  <p>The full profile uses <code>results/</code>. An explicit
+  <code>--profile compact</code> run defaults to <code>results-compact-5x9/</code>.
+  Load compact results in the dashboard with
+  <code>dashboard.html?csv=results-compact-5x9/runs.csv</code>.</p>
+  <table>
+    <tr><th>file</th><th>contents</th></tr>
+    <tr><td><code>runs.csv</code></td><td>one row per task — see column schema below</td></tr>
+    <tr><td><code>transcripts.jsonl</code></td>
+        <td>final content, tool calls, finish reason, output limit, and reasoning metadata per task</td></tr>
+    <tr><td><code>summary.md</code></td>
+        <td>Quality, Cost &amp; speed, Failures, math-by-tier, frontier-by-category,
+        quantitative agentic/contextual diagnostics, and longctx detail</td></tr>
+    <tr><td><code>fleetbench.log</code></td><td>console output, appended across runs</td></tr>
+  </table>
+
+  <h3>runs.csv schema</h3>
+  <table>
+    <tr><th>column</th><th>meaning</th></tr>
+    <tr><td><code>timestamp</code></td><td>UTC ISO time the task finished</td></tr>
+    <tr><td><code>model, category, task_id</code></td><td>the resume key</td></tr>
+    <tr><td><code>score</code></td><td>0.0 – 1.0</td></tr>
+    <tr><td><code>detail</code></td>
+        <td>human-readable reason — <code>"got 14.0, expected 16"</code>, <code>"wrong tool: get_weather"</code></td></tr>
+    <tr><td><code>prompt_tokens, completion_tokens</code></td>
+        <td>from <code>usage</code>, summed across multi-turn rounds</td></tr>
+    <tr><td><code>pp_tps, tg_tps</code></td><td>prompt-processing and generation t/s from llama-server timings</td></tr>
+    <tr><td><code>wall_s</code></td><td>wall-clock seconds for the task</td></tr>
+  </table>
+</section>
+
+<!-- ════════ RECIPES ════════ -->
+<section id="recipes">
+  <p class="eyebrow">nohup … &amp; tail -f results/fleetbench.log</p>
+  <h2>Recipes</h2>
+
+  <h3>Overnight fleet run</h3>
+  <p>Cold loads plus 8–9 t/s decode on the big MoEs means hours, not minutes:</p>
+<pre><code><span class="cmd">nohup python3 fleetbench.py --config fleetbench.yaml &gt; /dev/null 2&gt;&amp;1 &amp;</span>
+<span class="cmd">tail -f results/fleetbench.log</span></code></pre>
+
+  <h3>Quant shootout</h3>
+  <p>llama-swap routes on the model name, so two quants are just two entries — define
+  <code>GLM-5.2-Q4</code> and <code>GLM-5.2-Q5</code> in llama-swap's config pointing at different
+  GGUFs, list both in fleetbench.yaml, and the summary table becomes a quantization damage report.
+  Needle codes differ per model name, so caching can't cross-contaminate.</p>
+
+  <h3>Before / after a server-flag change</h3>
+  <p>Benchmark, change one thing (<code>-ts</code> split, <code>--cache-type-k</code>, a new
+  build), move <code>results/</code> aside, run again, diff the two summary.md files. The same
+  loop works for BIOS tuning passes.</p>
+
+  <h3>Slice results with pandas</h3>
+<pre><code><span class="k">import</span> pandas <span class="k">as</span> pd
+df = pd.read_csv(<span class="s">"results/runs.csv"</span>)
+<span class="cmd">print</span>(df.pivot_table(index=<span class="s">"model"</span>, columns=<span class="s">"category"</span>, values=<span class="s">"score"</span>, aggfunc=<span class="s">"mean"</span>).round(2))
+<span class="cmd">print</span>(df[df.category == <span class="s">"longctx"</span>].pivot_table(index=<span class="s">"model"</span>, columns=<span class="s">"task_id"</span>, values=<span class="s">"pp_tps"</span>))</code></pre>
+
+  <h3>Companion deep-dives, same endpoint</h3>
+  <p>fleetbench is triage; when a model looks interesting, standardized suites point at the
+  identical URL:</p>
+<pre><code><span class="c"># EleutherAI harness — GSM8K + IFEval through llama-swap</span>
+<span class="cmd">lm_eval</span> --model local-chat-completions \
+  --tasks gsm8k,ifeval --apply_chat_template --limit 100 \
+  --model_args model=GLM-5.2,base_url=http://localhost:8080/v1/chat/completions,num_concurrent=1,max_retries=3,tokenized_requests=False</code></pre>
+</section>
+
+<!-- ════════ EXTENDING ════════ -->
+<section id="extending">
+  <p class="eyebrow">vim fleetbench.py  # TOOL_TASKS / CODING_TASKS / REASONING_TASKS</p>
+  <h2>Extending the suite</h2>
+  <p>Tasks are plain data at the top of <code>fleetbench.py</code>. New entries are picked up
+  automatically, and because resume keys are per-id, adding tasks never forces a re-run — new ids
+  simply execute on the next invocation.</p>
+
+  <h3>A reasoning task</h3>
+<pre><code>REASONING_TASKS.append({
+    <span class="k">"id"</span>: <span class="s">"reason_snapshots"</span>,
+    <span class="k">"kind"</span>: <span class="s">"numeric"</span>,
+    <span class="k">"user"</span>: (<span class="s">"A volume takes hourly snapshots and keeps 24, plus daily snapshots "
+             "keeping 7, plus weekly keeping 4. How many snapshots are retained "
+             "in total? Give the final number."</span>),
+    <span class="k">"answer"</span>: 35,
+})</code></pre>
+
+  <h3>A coding task</h3>
+  <p>Make the function name unambiguous in the prompt; the asserts do the grading:</p>
+<pre><code>CODING_TASKS.append({
+    <span class="k">"id"</span>: <span class="s">"code_cidr"</span>,
+    <span class="k">"user"</span>: (<span class="s">"Write a Python function named `hosts_in_cidr` that takes a CIDR "
+             "prefix length (an int, 0-32) and returns the number of usable "
+             "host addresses (total minus network and broadcast; /31 and /32 "
+             "return 0). Return only the code in a single ```python code block."</span>),
+    <span class="k">"tests"</span>: [
+        <span class="s">"hosts_in_cidr(24) == 254"</span>,
+        <span class="s">"hosts_in_cidr(30) == 2"</span>,
+        <span class="s">"hosts_in_cidr(32) == 0"</span>,
+    ],
+})</code></pre>
+
+  <h3>A tool scenario</h3>
+  <p>For single-call checks: expected function plus argument substrings (strings match
+  case-insensitively, numbers exactly).</p>
+<pre><code>TOOL_TASKS.append({
+    <span class="k">"id"</span>: <span class="s">"tool_snapshot_create"</span>,
+    <span class="k">"desc"</span>: <span class="s">"Create a snapshot with the right volume name"</span>,
+    <span class="k">"tools"</span>: [SNAPSHOT_TOOL],          <span class="c"># define in OpenAI function format</span>
+    <span class="k">"user"</span>: <span class="s">"Take a snapshot of volume anf-prod-sql01 before the migration."</span>,
+    <span class="k">"kind"</span>: <span class="s">"expect_call"</span>,
+    <span class="k">"expect_fn"</span>: <span class="s">"create_snapshot"</span>,
+    <span class="k">"expect_args"</span>: {<span class="s">"volume"</span>: <span class="s">"anf-prod-sql01"</span>},
+})</code></pre>
+  <p>For multi-turn scenarios, add the mock payload to <code>_tool_response_for()</code> and use
+  <code>kind: "multi_turn"</code> with <code>answer_must_contain</code> (all required) or
+  <code>answer_must_contain_any</code> + <code>answer_must_not_contain</code> (the fabrication
+  check). Agentic cases can add <code>trajectory_checks</code> for calls, argument/count checks,
+  ordering, forbidden actions, final reporting, and stopping. Transcripts preserve the full
+  call/result trace. Quantitative tasks use <code>utility_grader</code> for normalized outcomes and
+  explicit safety/efficiency penalties. Since every task is custom-written rather than lifted from public sets, contamination
+  risk is low — but rotate tasks occasionally anyway; id-based resume makes additive changes free.</p>
+</section>
+
+<!-- ════════ TROUBLESHOOTING ════════ -->
+<section id="troubleshooting">
+  <p class="eyebrow">grep -i error results/fleetbench.log</p>
+  <h2>Troubleshooting</h2>
+
+  <details>
+    <summary>Warm-up fails with a timeout on big models</summary>
+    <div class="body"><p>Raise <code>request_timeout</code> above the worst cold load you've seen.
+    It must also be ≥ llama-swap's <code>healthCheckTimeout</code>, or the swap itself can be cut
+    off mid-load.</p></div>
+  </details>
+  <details>
+    <summary>A large model has many request timeouts and an unexpectedly low score</summary>
+    <div class="body"><p>Use <code>request_timeout: 1800</code> and
+    <code>request_concurrency: 1</code>. The timeout clock includes time waiting behind another
+    request, so concurrency can create false zeroes on a single-slot server. Timeout rows score
+    zero by design; rerun them into a clean directory after correcting the configuration.</p></div>
+  </details>
+  <details>
+    <summary>A model scores 0 on all tool tasks but "supports tools"</summary>
+    <div class="body"><p>Almost always the chat template: the llama-server command for that model
+    needs <code>--jinja</code>, and the template must emit structured tool calls. Check
+    <code>transcripts.jsonl</code> — if the tool call appears as JSON <em>inside</em>
+    <code>content</code> rather than in <code>tool_calls</code>, that's a template/parser problem
+    in the serving config, not the model.</p>
+    <p class="muted">That finding is itself useful: your agents will see exactly the same behavior.</p></div>
+  </details>
+  <details>
+    <summary>Math reports a generation/token-budget failure</summary>
+    <div class="body"><p>Inspect the linked transcript's finish reason and reasoning metadata.
+    Raise <code>math_max_tokens</code> or set <code>math_reasoning_budget</code>. Keep
+    <code>math_thinking: inherit</code> for capability comparisons; if forcing false, verify that
+    the model's chat template supports disabling reasoning.</p></div>
+  </details>
+  <details>
+    <summary>Needle depths are being skipped</summary>
+    <div class="body"><p>The <code>ctx</code> in fleetbench.yaml gates depths (at 90%),
+    independently of the server's real <code>--ctx-size</code>. Set it to what you actually
+    serve.</p></div>
+  </details>
+  <details>
+    <summary>Wildly variable tg t/s in the summary</summary>
+    <div class="body"><p>The summary uses medians, but check whether another client (agents, a
+    dashboard poller) was hitting the server mid-run — fleetbench assumes it owns the box while
+    running.</p></div>
+  </details>
+  <details>
+    <summary>A run died halfway</summary>
+    <div class="body"><p>Re-run the same command. Completed tasks are skipped, and completed
+    models aren't even loaded.</p></div>
+  </details>
+</section>
+
+<!-- ════════ FAQ ════════ -->
+<section id="faq">
+  <p class="eyebrow">man fleetbench</p>
+  <h2>FAQ</h2>
+
+  <details>
+    <summary>Why temperature 0?</summary>
+    <div class="body"><p>Determinism. Greedy decoding makes runs comparable across time, builds,
+    and quants. It's not your production sampling — override per model if you want prod-like
+    behavior, but expect run-to-run noise.</p></div>
+  </details>
+  <details>
+    <summary>Does it need llama-swap?</summary>
+    <div class="body"><p>No — any OpenAI-compatible chat endpoint works (plain llama-server, vLLM,
+    Ollama, remote APIs). One caveat: without llama-server's <code>timings</code> field, pp t/s is
+    unavailable and tg t/s falls back to a wall-clock estimate that includes prefill time.</p></div>
+  </details>
+  <details>
+    <summary>How long does a full run take?</summary>
+    <div class="body"><p>The configured full panel is 180 tasks per model, including 22
+    long-context cells. Large thinking models can take eight hours or more. For routine fleet
+    comparison, use <code>--profile compact</code>: it runs 45 capability-stratified tasks—five in
+    each of the nine categories—and is materially shorter than the full panel.
+    Use the full profile for exhaustive audits.</p></div>
+  </details>
+  <details>
+    <summary>Can two instances run at once?</summary>
+    <div class="body"><p>Don't — they'd fight over llama-swap swaps and corrupt each other's
+    throughput numbers.</p></div>
+  </details>
+  <details>
+    <summary>How do I compare against public leaderboard numbers?</summary>
+    <div class="body"><p>Mostly you can't with fleetbench — the tasks are custom by design. Use
+    lm-evaluation-harness or BFCL against the same endpoint for apples-to-apples with published
+    scores.</p></div>
+  </details>
+
+  <div class="note" style="margin-top:26px"><b>Calibration.</b> Core tasks are an easy floor —
+  seeing them all at 100% means "no gross regression," not "these models are equal"; switch to
+  <code>--tier frontier</code> for real separation. Scores are still coarse (small task counts), so
+  treat 10-point gaps as signal and 3-point gaps as noise. Multi-turn tool scenarios cap at 4
+  rounds, and needle depth targeting is approximate (~3.6 chars/token), so a "32k" needle is 32k ±
+  a few percent depending on tokenizer.</div>
+</section>
+
+</main>
+
+<footer>
+  <div class="in">
+    <span>fleetbench — quality + throughput for a llama-swap fleet</span>
+    <span>runs.csv · transcripts.jsonl · summary.md</span>
+  </div>
+</footer>
+
+</body>
+</html>

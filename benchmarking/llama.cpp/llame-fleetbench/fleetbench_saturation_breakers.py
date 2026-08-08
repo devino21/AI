@@ -1,0 +1,475 @@
+"""
+fleetbench saturation-breakers — 9 new frontier tasks.
+
+Drop-in additions for fleetbench.py. Each block is a list of task dicts that
+matches the shape and conventions of the existing frontier tier: original
+prompts (not lifted from public benchmark sets), deterministic programmatic
+grading, and reference answers verified by an independent brute force.
+
+Where each block goes:
+  CODING_FRONTIER_ADDITIONS    -> append inside CODING_TASKS (before the closing ])
+  REASONING_FRONTIER_ADDITIONS -> append inside REASONING_TASKS (before the closing ])
+  MATH_FRONTIER_ADDITIONS      -> append inside MATH_TASKS (before the closing ])
+
+Design notes on what was added and why:
+
+  1. Data analysis (LiveBench's most-discriminating category) was entirely
+     missing. reason_table_analytics adds it as a JSON-components task.
+
+  2. The existing frontier coding tasks lean toward stateful specifications
+     (LRU+TTL, JSON Patch, event reconciliation). Adding a parser-heavy task
+     (cron_next), a backtracking-DP task (regex_engine), and one more
+     CRUXEval-style output prediction (predict_iterators) covers different
+     failure modes: models that are strong at spec-following often stumble on
+     backtracking and on Python semantics of tee/islice/generators.
+
+  3. The truth-network puzzle in the existing frontier was solvable by direct
+     enumeration of 2^10 assignments; adding quantified statements ("at least
+     2 of {B,C,D}", "at most 1 of {A,C}") stresses genuine constraint
+     satisfaction rather than substitution.
+
+  4. The DSL evaluator forces multi-step symbolic tracking with branching.
+     Small models that faked it on the existing algebra problems tend to lose
+     state here.
+
+  5. Math frontier gets four more integer-answer problems spanning number
+     theory (multiplicative order), combinatorics (distinct partitions,
+     tribonacci-family recurrences), and lattice geometry — categories that
+     produce different failure signatures than the existing modular tower
+     and constrained-string tasks.
+
+What I deliberately did NOT add:
+
+  - Tools: the existing frontier is already the strongest category (parallel
+    calls, indirect prompt injection, quantitative utility grading). Adding
+    more scenarios would inflate wall-clock without new discrimination.
+
+  - Long-context: builders are complex and already cover the four hardest
+    established patterns (associative retrieval, variable tracing, policy
+    synthesis, case-file synthesis). Adding more would collide with them.
+
+  - MMLU-Pro / GPQA / HLE-style knowledge questions: these need large curated
+    samples to be non-noise, so they belong in lm-eval against the same
+    endpoint (per the README's companion-suites guidance), not fleetbench.
+"""
+
+# =============================================================================
+# CODING FRONTIER additions
+# =============================================================================
+
+CODING_FRONTIER_ADDITIONS = [
+    {
+        "id": "code_cron_next",
+        "tier": "frontier",
+        "user": (
+            "Implement `cron_next(expr, current)` for a Vixie-style cron expression. "
+            "`expr` is a 5-field string `minute hour day-of-month month day-of-week`, "
+            "where minute is 0-59, hour is 0-23, day-of-month is 1-31, month is 1-12, "
+            "and day-of-week is 0-6 with 0 = Sunday. Each field may be `*`, a single "
+            "integer, a comma-separated list, an `A-B` range, or an `A-B/S` or `*/S` "
+            "step; step 1 is the default. `current` is a `YYYY-MM-DD HH:MM` timestamp. "
+            "Return the next matching timestamp as `YYYY-MM-DD HH:MM`, strictly later "
+            "than `current` (never equal). Standard Vixie semantics: when BOTH "
+            "day-of-month and day-of-week are restricted (not `*`), the day matches if "
+            "EITHER field matches; when exactly one is restricted, only that field "
+            "governs the day. Handle month lengths and leap years correctly. Return "
+            "only code in one ```python block."
+        ),
+        "tests": [
+            "cron_next('*/15 * * * *', '2026-01-01 10:03') == '2026-01-01 10:15'",
+            "cron_next('0 9 * * 1-5', '2026-01-02 09:00') == '2026-01-05 09:00'",
+            "cron_next('30 2 1 * *', '2026-03-01 02:30') == '2026-04-01 02:30'",
+            "cron_next('0 0 29 2 *', '2027-03-01 00:00') == '2028-02-29 00:00'",
+            "cron_next('0 12 * * 0', '2026-07-15 00:00') == '2026-07-19 12:00'",
+            "cron_next('15,45 * * * *', '2026-01-01 10:15') == '2026-01-01 10:45'",
+            "cron_next('0 * * * *', '2026-01-01 10:00') == '2026-01-01 11:00'",
+            "cron_next('0 6 1 * 1', '2026-01-02 00:00') == '2026-01-05 06:00'",
+        ],
+    },
+    {
+        "id": "code_regex_engine",
+        "tier": "frontier",
+        "user": (
+            "Implement `regex_match(pattern, text)` that returns True iff `text` "
+            "matches `pattern` in full (start to end). Supported syntax: a literal "
+            "character, `.` matching any single character, a character class "
+            "`[abc]` matching any of the listed characters (LITERAL characters only, "
+            "no ranges), a negated class `[^abc]` matching any character not listed, "
+            "a backslash escape `\\c` for any literal `c` (including `\\.`, `\\[`, "
+            "`\\\\`), and the quantifiers `*` (zero or more), `+` (one or more), and "
+            "`?` (zero or one) applied to the immediately preceding character or "
+            "class. There are no groups, no ranges, no anchors, and no alternation. "
+            "Do not use the `re` module. Return only code in one ```python block."
+        ),
+        "tests": [
+            "regex_match('abc', 'abc') == True",
+            "regex_match('abc', 'abcd') == False",
+            "regex_match('a.c', 'abc') == True",
+            "regex_match('a.c', 'ac') == False",
+            "regex_match('a*', '') == True",
+            "regex_match('a*', 'aaa') == True",
+            "regex_match('a+', '') == False",
+            "regex_match('a+', 'aaa') == True",
+            "regex_match('a?b', 'b') == True",
+            "regex_match('a?b', 'ab') == True",
+            "regex_match('a?b', 'aab') == False",
+            "regex_match('[abc]+', 'cab') == True",
+            "regex_match('[abc]+', 'cad') == False",
+            "regex_match('[^xy]*', 'abc') == True",
+            "regex_match('[^xy]*', 'axc') == False",
+            "regex_match('.*x', 'prefix') == True",
+            "regex_match('a.*b', 'acccb') == True",
+            "regex_match('a.*b', 'aXbXc') == False",
+            r"regex_match('\\.', '.') == True",
+            r"regex_match('\\.', 'a') == False",
+            r"regex_match('\\[abc\\]', '[abc]') == True",
+            "regex_match('[abc]*d', 'aabcd') == True",
+            "regex_match('[abc]*d', 'aabcx') == False",
+            "regex_match('a.*ab', 'aaab') == True",
+        ],
+    },
+    {
+        "id": "code_predict_iterators",
+        "tier": "frontier",
+        "kind": "output_json",
+        "user": (
+            "Without running the program, determine exactly what it prints. Reply "
+            "with only the JSON object and no Markdown or explanation.\n\n"
+            "```python\n"
+            "import json\n"
+            "from itertools import islice, cycle, count, chain\n\n"
+            "log = []\n\n"
+            "def watch(name, seq):\n"
+            "    def gen():\n"
+            "        for x in seq:\n"
+            "            log.append([name, x])\n"
+            "            yield x\n"
+            "    return gen()\n\n"
+            "a = watch('A', count(2))          # 2, 3, 4, 5, ...\n"
+            "b = watch('B', cycle([10, 20]))   # 10, 20, 10, 20, ...\n"
+            "combined = chain(islice(a, 4), islice(b, 3))\n"
+            "first = list(islice(combined, 3))   # take first 3 items\n"
+            "rest = list(combined)               # drain the rest\n"
+            "print(json.dumps({'first': first, 'rest': rest, 'log': log}))\n"
+            "```"
+        ),
+        "expect": {
+            "first": [2, 3, 4],
+            "rest": [5, 10, 20, 10],
+            "log": [["A", 2], ["A", 3], ["A", 4], ["A", 5],
+                    ["B", 10], ["B", 20], ["B", 10]],
+        },
+    },
+]
+
+# =============================================================================
+# REASONING FRONTIER additions
+# =============================================================================
+
+REASONING_FRONTIER_ADDITIONS = [
+    {
+        "id": "reason_web_of_lies_quantified",
+        "tier": "frontier",
+        "kind": "json_components",
+        "user": (
+            "Nine agents A through I are each either truthful (their whole statement "
+            "is true) or lying (their whole statement is false). Their statements are "
+            "simultaneous:\n"
+            "A: At least 2 of {B, C, D} are truthful.\n"
+            "B: Exactly one of {E, I} is truthful.\n"
+            "C: F and H have the same truth value.\n"
+            "D: A is truthful and G is lying.\n"
+            "E: At most 1 of {B, C, F} is truthful.\n"
+            "F: At least one of {A, D} is lying.\n"
+            "G: Exactly 2 of {H, I, A} are truthful.\n"
+            "H: C and I have different truth values.\n"
+            "I: D is truthful.\n"
+            "The system has a unique consistent solution. Reply only with a JSON "
+            "object whose keys are exactly A through I and whose values are JSON "
+            "booleans."
+        ),
+        "expect": {
+            "A": False, "B": False, "C": True, "D": False, "E": False,
+            "F": True,  "G": False, "H": True, "I": False,
+        },
+    },
+    {
+        "id": "reason_table_analytics",
+        "tier": "frontier",
+        "kind": "json_components",
+        "user": (
+            "Two small tables are given as CSV. Answer four queries about the joined "
+            "data.\n\n"
+            "Table services:\n"
+            "name,region,tier\n"
+            "atlas,west,prod\n"
+            "boreal,east,dev\n"
+            "cygnus,west,prod\n"
+            "draco,central,prod\n"
+            "echo,west,prod\n"
+            "flint,east,prod\n"
+            "gale,north,dev\n\n"
+            "Table deployments:\n"
+            "service,replicas,version\n"
+            "atlas,4,v1.7.2\n"
+            "cygnus,2,v2.0.1\n"
+            "draco,8,v1.9.4\n"
+            "flint,1,v2.0.0\n"
+            "echo,3,v1.8.5\n\n"
+            "Queries (join services.name = deployments.service):\n"
+            "q1: total replicas across all services whose region is west.\n"
+            "q2: name of the prod-tier service with the lexicographically greatest "
+            "version string.\n"
+            "q3: how many services in the services table have no matching row in the "
+            "deployments table.\n"
+            "q4: sorted list of prod-tier service names running fewer than 3 "
+            "replicas (only services that actually have a deployment row).\n\n"
+            "Reply with only one JSON object whose keys are exactly q1, q2, q3, q4. "
+            "q1 and q3 must be JSON numbers, q2 a string, q4 a JSON array of "
+            "strings sorted ascending."
+        ),
+        "expect": {
+            "q1": 9,
+            "q2": "cygnus",
+            "q3": 2,
+            "q4": ["cygnus", "flint"],
+        },
+    },
+    {
+        "id": "reason_dsl_eval",
+        "tier": "frontier",
+        "kind": "json_components",
+        "user": (
+            "Evaluate a tiny expression language. A program is a list of definitions "
+            "written one per line as `name = expr`. Expressions are one of:\n"
+            "  - a decimal integer literal;\n"
+            "  - a previously-defined name;\n"
+            "  - a binary form `(op a b)` where op is one of add, sub, mul, mod, "
+            "eq, lt, and, or;\n"
+            "  - a conditional `(if c t e)`.\n"
+            "Semantics: integer arithmetic; mod is the Python remainder (result "
+            "non-negative when the divisor is positive); eq and lt return 1 for "
+            "true and 0 for false; and/or treat any nonzero value as true and "
+            "return 1 or 0; if evaluates its condition and then exactly one branch. "
+            "Names bind top-to-bottom.\n\n"
+            "Program:\n"
+            "x = 17\n"
+            "y = (mul x 3)\n"
+            "z = (add y 4)\n"
+            "bit1 = (mod z 2)\n"
+            "cond = (and bit1 (lt z 60))\n"
+            "out  = (if cond (add (mul z 2) 3) (sub z 7))\n"
+            "final = (add out (mul (sub z x) 2))\n\n"
+            "Reply with only one JSON object whose keys are exactly y, z, bit1, "
+            "cond, out, final, and whose values are JSON numbers."
+        ),
+        "expect": {
+            "y": 51,
+            "z": 55,
+            "bit1": 1,
+            "cond": 1,
+            "out": 113,
+            "final": 189,
+        },
+    },
+]
+
+# =============================================================================
+# MATH FRONTIER additions (integer answers, brute-force verified)
+# =============================================================================
+
+MATH_FRONTIER_ADDITIONS = [
+    {
+        "id": "math_mult_order_1009",
+        "tier": "frontier",
+        "answer": 168,
+        "problem": (
+            "What is the smallest positive integer k such that 3^k leaves remainder 1 "
+            "when divided by 1009? (1009 is prime.)"
+        ),
+    },
+    {
+        "id": "math_distinct_partitions_30",
+        "tier": "frontier",
+        "answer": 296,
+        "problem": (
+            "How many ways can 30 be written as a sum of distinct positive integers, "
+            "where order does not matter? For example, 30 = 30, 30 = 29 + 1, "
+            "30 = 20 + 7 + 3, and 30 = 10 + 9 + 8 + 3 all count as different sums."
+        ),
+    },
+    {
+        "id": "math_lattice_annulus",
+        "tier": "frontier",
+        "answer": 236,
+        "problem": (
+            "How many ordered integer pairs (x, y) satisfy all three conditions: "
+            "50 <= x*x + y*y <= 200, and x + y > 0?"
+        ),
+    },
+    {
+        "id": "math_no_three_consecutive",
+        "tier": "frontier",
+        "answer": 10609,
+        "problem": (
+            "How many binary strings of length 15 contain no three consecutive "
+            "1s? Count the empty pattern of zero 1s as well; only strings containing "
+            "the substring 111 are excluded."
+        ),
+    },
+]
+
+
+# =============================================================================
+# SELF-TEST ADDITIONS  (paste inside selftest() so a broken grader can't ship)
+# =============================================================================
+
+SELFTEST_SNIPPET = r'''
+    # --- saturation-breaker additions ---
+
+    # coding: run the cron and regex reference solutions through score_coding
+    cron_ref = """```python
+def cron_next(expr, current):
+    from datetime import datetime, timedelta
+    def parse(spec, lo, hi):
+        if spec == "*":
+            return set(range(lo, hi + 1))
+        out = set()
+        for part in spec.split(","):
+            step = 1
+            if "/" in part:
+                part, step_str = part.split("/", 1)
+                step = int(step_str)
+            if part == "*":
+                start, end = lo, hi
+            elif "-" in part:
+                a, b = part.split("-")
+                start, end = int(a), int(b)
+            else:
+                start = end = int(part)
+            for v in range(start, end + 1, step):
+                if lo <= v <= hi:
+                    out.add(v)
+        return out
+    m_s, h_s, dm_s, mo_s, dw_s = expr.split()
+    mins, hrs, doms, mons, dows = (parse(m_s, 0, 59), parse(h_s, 0, 23),
+                                    parse(dm_s, 1, 31), parse(mo_s, 1, 12),
+                                    parse(dw_s, 0, 6))
+    t = datetime.strptime(current, "%Y-%m-%d %H:%M") + timedelta(minutes=1)
+    for _ in range(4 * 366 * 24 * 60):
+        cdw = (t.weekday() + 1) % 7
+        if dm_s == "*" and dw_s == "*":
+            day = True
+        elif dm_s == "*":
+            day = cdw in dows
+        elif dw_s == "*":
+            day = t.day in doms
+        else:
+            day = (t.day in doms) or (cdw in dows)
+        if t.minute in mins and t.hour in hrs and t.month in mons and day:
+            return t.strftime("%Y-%m-%d %H:%M")
+        t += timedelta(minutes=1)
+    raise ValueError("no match")
+```"""
+    cron_task = next(t for t in CODING_TASKS if t["id"] == "code_cron_next")
+    s, _ = score_coding(cron_task, {"content": cron_ref})
+    check("code_cron_next reference passes", s == 1.0)
+
+    regex_ref = r"""```python
+def regex_match(pattern, text):
+    tokens = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\" and i + 1 < len(pattern):
+            tok = ("lit", pattern[i + 1]); i += 2
+        elif c == ".":
+            tok = ("dot", None); i += 1
+        elif c == "[":
+            j = pattern.index("]", i + 1)
+            body = pattern[i + 1:j]
+            neg = body.startswith("^")
+            chars = set(body[1:] if neg else body)
+            tok = ("ncls" if neg else "cls", chars); i = j + 1
+        else:
+            tok = ("lit", c); i += 1
+        q = None
+        if i < len(pattern) and pattern[i] in "*+?":
+            q = pattern[i]; i += 1
+        tokens.append((tok[0], tok[1], q))
+    def one(tok, ch):
+        k, p, _ = tok
+        if k == "lit":  return ch == p
+        if k == "dot":  return True
+        if k == "cls":  return ch in p
+        if k == "ncls": return ch not in p
+        return False
+    from functools import lru_cache
+    @lru_cache(maxsize=None)
+    def M(ti, si):
+        if ti == len(tokens):
+            return si == len(text)
+        q = tokens[ti][2]
+        if q is None:
+            return si < len(text) and one(tokens[ti], text[si]) and M(ti+1, si+1)
+        if q == "?":
+            if si < len(text) and one(tokens[ti], text[si]) and M(ti+1, si+1):
+                return True
+            return M(ti+1, si)
+        lo = 1 if q == "+" else 0
+        k = si
+        while k < len(text) and one(tokens[ti], text[k]):
+            k += 1
+        for take in range(k - si, lo - 1, -1):
+            if M(ti+1, si + take):
+                return True
+        return False
+    return M(0, 0)
+```"""
+    regex_task = next(t for t in CODING_TASKS if t["id"] == "code_regex_engine")
+    s, _ = score_coding(regex_task, {"content": regex_ref})
+    check("code_regex_engine reference passes", s == 1.0)
+
+    # iterator output prediction: submitting the expected JSON must score full.
+    iter_task = next(t for t in CODING_TASKS if t["id"] == "code_predict_iterators")
+    s, _ = score_coding(iter_task, {"content": json.dumps(iter_task["expect"])})
+    check("code_predict_iterators reference passes", s == 1.0)
+
+    # reasoning: expected values must pass score_reasoning
+    for task_id in ("reason_web_of_lies_quantified",
+                    "reason_table_analytics",
+                    "reason_dsl_eval"):
+        task = next(t for t in REASONING_TASKS if t["id"] == task_id)
+        s, _ = score_reasoning(task, {"content": json.dumps(task["expect"])})
+        check(f"{task_id} reference answer passes", s == 1.0)
+
+    # math: brute-force each new answer independently
+    x = 1
+    for k in range(1, 2000):
+        x = (x * 3) % 1009
+        if x == 1:
+            break
+    check("gt mult_order(3, 1009)",
+          next(t["answer"] for t in MATH_TASKS if t["id"] == "math_mult_order_1009") == k == 168)
+
+    _dp = [0] * 31; _dp[0] = 1
+    for p in range(1, 31):
+        for tgt in range(30, p - 1, -1):
+            _dp[tgt] += _dp[tgt - p]
+    check("gt distinct_partitions(30)",
+          next(t["answer"] for t in MATH_TASKS if t["id"] == "math_distinct_partitions_30")
+          == _dp[30] == 296)
+
+    _cnt = sum(1 for x in range(-16, 17) for y in range(-16, 17)
+               if 50 <= x*x + y*y <= 200 and x + y > 0)
+    check("gt lattice_annulus",
+          next(t["answer"] for t in MATH_TASKS if t["id"] == "math_lattice_annulus")
+          == _cnt == 236)
+
+    _a = [1, 2, 4, 7]
+    for _ in range(4, 16):
+        _a.append(_a[-1] + _a[-2] + _a[-3])
+    check("gt no_three_consecutive_len15",
+          next(t["answer"] for t in MATH_TASKS if t["id"] == "math_no_three_consecutive")
+          == _a[15] == 10609)
+'''

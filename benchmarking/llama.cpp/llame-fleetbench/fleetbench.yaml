@@ -1,0 +1,293 @@
+# fleetbench config — point at llama-swap's OpenAI-compatible endpoint.
+# llama-swap swaps models automatically based on the `model` field, so the
+# only thing fleetbench changes between models is the name.
+
+base_url: http://localhost:8080/v1   # adjust host and port for your llama-swap endpoint
+api_key: none
+output_dir: results
+
+# Per-request wall-clock timeout (seconds). Must cover BOTH the worst cold
+# load AND the slowest single request — a thinking model at the x8 token
+# budget can spend minutes on one coding task, and a 64k needle prefill is
+# many seconds on its own. Keep it >= your llama-swap healthCheckTimeout (900)
+# and don't drop it to something like 10 or thinking tasks will all time out.
+request_timeout: 1800
+
+# Transient-failure handling. llama-swap answers 502/503 while it loads or
+# switches a model — normal, self-resolving, and NOT a model result. Requests
+# now retry with exponential backoff (5s, 10s, 20s, 40s, 60s, capped) instead
+# of failing the task. Without this, a swap-time 502 recorded a 0.0 row that
+# resume counted as complete, pinning the task at zero on every later run.
+# Warm-up gets a longer budget because it is the request that triggers the load.
+request_retries: 6      # ~2.5 min of waiting before a task is given up on
+warmup_retries: 10      # ~7 min, covers a cold load of a large model
+# After 3 consecutive give-ups the model is abandoned rather than burning the
+# remaining tasks against a server that is down.
+
+categories: [tools, agentic, compliance, applied, finance, coding, reasoning, math, longctx]
+
+# One suite: the 45-cell panel (5 tasks x 9 categories). The exhaustive
+# `full` and `calibrated` profiles have been removed along with the --profile
+# flag; results always land in `output_dir` below.
+#
+# ---- replicates ---------------------------------------------------------
+# Attempts per task, per category. This is the difference between "model A
+# scored 2 points higher" and "model A is better": with one attempt, run-to-run
+# noise and real capability spread are perfectly confounded and no gap can be
+# attributed. Averaged per task before any category mean, so replicates
+# tighten the estimate without inflating N.
+#
+# Budget them where sampling actually happens. tools/compliance/applied/math
+# run at temperature 0 and are near-reproducible, so a second attempt buys
+# almost nothing; the five categories below run at 0.6 and need repeats.
+# Measured cost on the reference fleet: k=2 on the sampled five puts the
+# slowest model (glm-5.2, 8.4 tok/s) at ~5.2h. Drop `coding` to 1 for ~4.4h.
+# `--repeat N` overrides every entry.
+# Fraction of tasks in a replicated category that later attempts actually
+# re-run. Estimating run-to-run noise does NOT require repeating every task: a
+# random subsample gives an unbiased estimate of the same variance for a
+# fraction of the wall-clock. 0.34 costs ~1/3 of the extra time.
+#
+# It has to be RANDOM. Re-running only the tasks that failed would measure
+# P(pass | it already failed once), which regression to the mean inflates into
+# a suite that looks far flakier than it is -- and would never catch a task the
+# model solves half the time that happened to pass on attempt 1.
+#
+# The sample is deterministic in `seed`, so a resumed run picks the same tasks.
+# Set to 1.0 (default) to replicate everything.
+replicate_sample: 1.0
+
+replicates:
+  default: 1
+# Every category runs ONCE. Nothing is repeated.
+#
+# Raising any of these re-runs that category's tasks with a different seed,
+# which is the only way to measure run-to-run noise -- but it costs a full
+# extra pass over the category, and it re-runs passes as well as failures.
+# Left off by default: the wall-clock is the scarce resource here.
+#
+# If you ever want the noise floor, do it as a ONE-OFF rather than a standing
+# cost -- `--repeat 3 --categories coding` on a spare evening -- and keep the
+# number. It does not change between runs unless sampling params change.
+#  agentic: 2
+#  coding: 2
+#  finance: 2
+#  longctx: 2
+#  reasoning: 2
+
+# Independent task environments may overlap when llama.cpp exposes multiple
+# parallel slots. Scores, prompts, seeds, and graders are unchanged. Use 1 for
+# strict serial throughput measurement or when the server has only one slot.
+# Long-context cells remain serial to avoid multiplying large KV-cache demand.
+request_concurrency: 1
+
+# End-state-graded virtual agent environments. Individual scenarios use 10-18
+# tool rounds; this cap controls response size per round before any model-level
+# thinking multiplier is applied.
+agent_max_tokens: 2048
+
+# Needle-in-haystack sweep (core tier). Depths are approximate prompt token
+# counts; depths beyond ~75% of a model's ctx are skipped automatically so
+# chat-template and output tokens still fit inside the configured window.
+# 65536 is intentionally omitted here: a lone needle saturates at extreme depth
+# (it mostly measures "did the model read the window"), and the 65k signal is
+# retained more discriminatingly by the hard and frontier tiers below. This
+# drops the 2 most expensive core cells (~13% of longctx prefill). Add 65536
+# back if you want plain-needle positional reliability measured at max depth.
+longctx_depths: [4096, 16384, 32768]
+needle_positions: [0.25, 0.75]
+
+# Depths for the HARD longctx tasks (multi-needle, distractor, needle+math).
+# Fewer depths since each is more expensive; the same 75%-of-ctx skip applies.
+hard_longctx_depths: [16384, 65536]
+
+# Frontier long-context probes go beyond literal needle matching: indirect
+# associative retrieval (NoLiMa-style) and multi-hop variable tracing
+# (RULER-style).
+frontier_longctx_depths: [32768, 65536]
+
+# Math requests inherit each model's configured reasoning mode by default.
+# Thinking models need enough total output budget to finish their internal
+# reasoning and populate message.content; 2048 caused the old empty-answer bug.
+math_thinking: inherit       # inherit | true | false
+math_max_tokens: 8192
+# math_reasoning_budget: 4096  # optional llama.cpp reasoning-only cap
+
+# ---- Per-category thinking control -------------------------------------
+# Each category can independently force server-side reasoning on or off:
+#   <category>_thinking: inherit | on | off   (default inherit = no change)
+#   <category>_max_tokens: N                  (budget when forced; optional)
+# Categories: tools, coding, reasoning, agentic, compliance, applied, finance.
+# 'inherit' keeps the model's own `thinking` flag and x8 budget (a true no-op).
+# 'off' disables reasoning and caps the response at the small base budget —
+# large savings on decision/lookup tasks that don't need a scratchpad.
+# 'on' forces reasoning even for a non-thinking model.
+#
+# IMPORTANT: thinking on vs off are DIFFERENT measurements of the same task.
+# When you flip a category, point output_dir at a fresh folder (or archive the
+# old results) so the append-only CSV never blends both under one task_id.
+#
+# Starting experiment: reasoning-light categories run WITHOUT thinking so we
+# can measure the accuracy/time trade-off against the thinking-on categories
+# (coding, reasoning, math, agentic, longctx stay on via inherit). Set any of
+# these back to `inherit` to restore the previous all-thinking behavior.
+tools_thinking: off
+compliance_thinking: off
+applied_thinking: off
+
+# Forced-off budgets. `off` drops the x8 multiplier, so these categories run on
+# a flat pool. 1024 was calibrated against the FULL panel, which contains core
+# lookups where a scratchpad is pure waste. The five-cell COMPACT tools and
+# applied panels emphasize harder protocol, workflow, and numeric tasks rather
+# than simple lookups, so 1024 truncated the answer out
+# of existence on the reasoning-shaped survivors — `tool_incident_dispatch_
+# utility` (a combinatorial scheduling optimization) at 1050-1148 tokens for
+# every model that actually reasoned, and all four of minimax-m2.5's applied
+# numerics at 2852-4097 reasoning chars with empty content.
+#
+# 4096 also serves as the only available backstop for a template that ignores
+# `enable_thinking`: `off` sets reasoning_budget_tokens to 0, so when the server
+# honors neither flag the total pool is the sole protection for the answer.
+# Compliance is deliberately left at the 1024 default — no compliance task has
+# ever truncated, and its answers are single tool calls.
+tools_max_tokens: 4096
+applied_max_tokens: 4096
+
+# ---- Per-category reasoning caps ---------------------------------------
+#   <category>_reasoning_budget: N   (llama.cpp reasoning-only token cap)
+# max_tokens is ONE pool shared by the scratchpad and message.content. With no
+# cap, a thinking model can spend the entire budget reasoning and return empty
+# content (finish_reason=length) — which graders record as "no code block
+# found" / "no valid JSON", i.e. a capability failure rather than the
+# truncation it actually is. Capping reasoning reserves the remainder for the
+# answer. These apply in `inherit` mode too, so they work without flipping a
+# category's thinking flag (which would change the measurement).
+#
+# Budgets below sit at ~60% of each category's effective x8 pool, leaving ~40%
+# for the answer. Raise if you see scores drop with truncated scratchpads.
+coding_reasoning_budget: 10000      # of 16384 (2048 base x8)
+reasoning_reasoning_budget: 5000    # of 12288 (see reasoning_max_tokens below)
+# deepseek-v4f restated its whole scratchpad in the answer on
+# reason_web_of_lies_quantified: ~5000 reasoning tokens plus ~3500 of content
+# overran the 8192 pool and scored 0.0 for "no valid JSON object", while three
+# other models finished the same task in ~5100 total. max_tokens is a cap rather
+# than a target, so raising it costs nothing for models that stop early.
+reasoning_max_tokens: 12288
+finance_reasoning_budget: 5000      # of 8192
+agentic_reasoning_budget: 10000     # of 16384 (2048 per round x8)
+longctx_reasoning_budget: 5000      # of 8192 (structured cells; needles are tiny)
+# math was the only thinking category left without a cap, and it failed the same
+# way coding did before it got one: laguna-s-2.1-q8 spent all 8192 tokens of
+# math_bounded_triples on an 18638-char scratchpad and returned empty content,
+# scoring 0.0 on a task deepseek-v4f, hy3-q5 and qwen3.6-27b-fable all pass.
+math_reasoning_budget: 4096         # of 8192 (math_max_tokens)
+
+# NOTE on `<category>_thinking: off` — it is a *request*, not a guarantee. A
+# chat template that ignores `enable_thinking` (and a server that ignores
+# `reasoning_budget_tokens: 0`) will reason anyway, and then the small forced-off
+# budget truncates it into a guaranteed 0. minimax-m2.5 does exactly this: its
+# four applied tasks each burned the whole 1024-token budget on a scratchpad and
+# scored 0 for "no JSON object". Grader details now say "generation exhausted N
+# tokens" when this happens — if you see that on a forced-off category, either
+# raise `<category>_max_tokens` for that model or set it back to `inherit`.
+# coding_thinking: inherit
+# reasoning_thinking: inherit
+# agentic_thinking: inherit
+# finance_thinking: inherit
+
+seed: 1
+
+
+models:
+
+  - name: deepseek-v4f
+    ctx: 131072
+    thinking: true
+  
+  - name: dsv4f-0731
+    ctx: 131072
+    thinking: true  
+  
+  - name: dsv4f-0731-dspark
+    ctx: 131072
+    thinking: true
+    
+  - name: gemma-4-31b
+    ctx: 98304
+    thinking: true
+
+  - name: glm-5.2
+    ctx: 196608
+    thinking: true
+
+  - name: hy3-q5
+    ctx: 131072
+    thinking: true
+  
+  - name: minimax-m3
+    ctx: 131072
+    thinking: true
+
+  - name: qwen3.6-27b-mtp
+    ctx: 131072
+    thinking: true
+
+  - name: qwen3.6-27b-mtp-deep
+    ctx: 131072
+    thinking: true
+
+  - name: qwen3.6-27b-mtp-fast
+    ctx: 131072
+    thinking: true
+    
+  - name: qwen3.6-27b-mtp-q8
+    ctx: 131072
+    thinking: true    
+
+  - name: qwen3.6-27b-mtp-q8-coder
+    ctx: 131072
+    thinking: true
+        
+  - name: qwen3.6-27b-mtp-q8-deep
+    ctx: 131072
+    thinking: true
+                
+  - name: qwen3.6-27b-mtp-q8-fast
+    ctx: 131072
+    thinking: true
+ 
+  - name: qwen3.6-27b-reddit
+    ctx: 131072
+    thinking: true
+         
+  - name: qwen3.6-27b-vision
+    ctx: 131072
+    thinking: true
+
+  - name: qwen3.6-27b-vision-deep
+    ctx: 131072
+    thinking: true
+
+  - name: qwen3.6-27b-vision-fast
+    ctx: 131072
+    thinking: true
+        
+  - name: qwen3.6-35b-a3b-mtp-q8
+    ctx: 131072
+    thinking: true
+        
+  - name: qwen3.6-35b-a3b-q8-mtp-deep
+    ctx: 131072
+    thinking: true
+        
+  - name: qwen3.6-35b-a3b-q8-mtp-fast
+    ctx: 131072
+    thinking: true
+
+  - name: qwythos-9b-v2
+    ctx: 131072
+    thinking: true
+
+  - name: qwythos-9b-v2-mtp
+    ctx: 131072
+    thinking: true

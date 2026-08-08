@@ -1,5 +1,6 @@
-<img width="2098" height="1147" alt="Screenshot From 2026-08-08 13-42-51" src="https://github.com/user-attachments/assets/286e1a57-3fc5-4c18-a820-d7366d0b98d0" />
 <img width="1122" height="1224" alt="Screenshot From 2026-08-08 14-23-00" src="https://github.com/user-attachments/assets/fad9058d-0653-4a90-be57-a2ea60d3c4cd" />
+
+
 # Manual Model Benchmark Prompt Suite
 
 A practical, manual benchmarking suite for testing local and hosted LLMs through real prompts rather than a backend benchmark runner.
@@ -225,6 +226,8 @@ This additionally tests:
 
 When comparing agents, remember that the result reflects **both the underlying model and the agent harness**.
 
+## SAMPLE
+<img width="2098" height="1147" alt="Screenshot From 2026-08-08 13-42-51" src="https://github.com/user-attachments/assets/286e1a57-3fc5-4c18-a820-d7366d0b98d0" />
 ---
 
 # Comparing Models

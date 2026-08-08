@@ -1,3 +1,5 @@
+<img width="2467" height="1267" alt="Screenshot From 2026-08-08 17-37-59" src="https://github.com/user-attachments/assets/c52659a4-14de-46b1-b127-3794c3cf866d" />
+<img width="1574" height="1061" alt="Screenshot From 2026-08-08 17-37-30" src="https://github.com/user-attachments/assets/e92b8356-f711-4ef1-9b2a-ca8c33c083c1" />
 # fleetbench
 
 Quality + throughput benchmark for a llama-swap model fleet. One command walks

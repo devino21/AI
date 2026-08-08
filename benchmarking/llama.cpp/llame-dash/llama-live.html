@@ -1,0 +1,2631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llama.cpp — Live Rig Monitor</title>
+<style>
+  /* ============================================================
+     Palette: "synthwave", validated on surface #08080c with the
+     six computable checks:
+       worst adjacent CVD ΔE 21.5 (deutan)   target >= 8   PASS
+       worst adjacent normal-vision ΔE 23.8  floor 15      PASS
+       all marks >= 3:1 contrast vs surface                PASS
+       OKLCH lightness band                  DEVIATES — see below
+     Slot order is the CVD-safety mechanism; don't reorder casually.
+
+     The lightness band (dark mode: L 0.48–0.67) is calibrated for a
+     #1a1a19 surface. This page sits on #08080c/#000, ~3 stops darker,
+     and every hue here lands above the band (L 0.69–0.85). That is
+     deliberate — it is what makes the neon read — and the checks that
+     actually govern legibility (CVD separation, normal-vision floor,
+     contrast) all pass with wide margins. Don't "fix" it by dimming.
+
+     Sequential ramps, validated as ordinal ramps (monotone L,
+     ΔL >= 0.06 per step, single hue, dark end clears 2:1):
+       --pct-*   violet, p50 -> p99
+       --heat-*  cyan,   per-core CPU utilisation
+       --pres-*  amber,  context / KV pressure
+     ============================================================ */
+  :root {
+    color-scheme: dark;
+    --bg:            #000000;
+    --surface-1:     #08080c;
+    --surface-2:     #101018;
+    --surface-3:     #16161f;
+    --border:        #1e1e2b;
+    --border-hi:     #2e2e42;
+    --text-primary:  #f2f2f7;
+    --text-secondary:#9fa0b5;
+    --text-muted:    #6b6c80;
+    --grid:          #17171f;
+
+    --s1: #22d3ee;   /* cyan   — decode / generation      */
+    --s2: #a3e635;   /* lime   — prefill / prompt          */
+    --s3: #a78bfa;   /* violet — latency / TTFT / ITL      */
+    --s4: #fbbf24;   /* amber  — context / KV / output     */
+    --s5: #ff4d9d;   /* pink   — cache / queue / accents   */
+
+    /* percentile ramp (ordinal, violet) */
+    --pct-50: #c4b5fd;
+    --pct-95: #a78bfa;
+    --pct-99: #7c5cf0;
+    /* per-core CPU heat (ordinal, cyan) */
+    --heat-1: #1d4d5b; --heat-2: #1a7086; --heat-3: #1a97b3;
+    --heat-4: #1fb8d6; --heat-5: #22d3ee;
+    /* pressure ramp (ordinal, amber) */
+    --pres-1: #6b4c12; --pres-2: #9c7016; --pres-3: #c99418; --pres-4: #fbbf24;
+
+    --good: #a3e635;
+    --warn: #fbbf24;
+    --crit: #ff4d9d;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font: 14.9px/1.4 var(--mono);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 60% 50% at 30% -8%, rgba(34,211,238,.10), transparent 70%),
+      radial-gradient(ellipse 45% 40% at 88% -4%, rgba(255,77,157,.07), transparent 70%);
+    background-attachment: fixed;
+    overflow: hidden;
+  }
+
+  /* ---------------- one-screen shell ----------------
+     The whole dashboard is a fixed-height grid: header, model strip,
+     tile row, then the chart deck taking whatever is left. Nothing
+     scrolls at the page level — panels that can overflow (tables,
+     the event log) scroll inside themselves. */
+  .app {
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px 12px 10px;
+    overflow: hidden;
+  }
+
+  /* Below this height one screen is a lie — give the page back its scrollbar
+     rather than crushing every chart into an unreadable sliver. */
+  @media (max-height: 860px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100dvh; }
+    .deck > .col > * { min-height: 190px; }
+  }
+
+  /* ---------------- header ---------------- */
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding-bottom: 7px; border-bottom: 1px solid var(--border);
+  }
+  h1 {
+    font-size: 14.9px; font-weight: 700; margin: 0;
+    letter-spacing: .16em; text-transform: uppercase; white-space: nowrap;
+    background: linear-gradient(92deg, var(--s1), var(--s5) 62%, var(--s3));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 26px rgba(34,211,238,.28);
+  }
+  .spacer { flex: 1 1 auto; }
+  .srcs { display: flex; gap: 6px; align-items: center; }
+  .src {
+    font-size: 10.3px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px;
+    border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px;
+    background: var(--surface-1);
+  }
+  .src i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+  .src.ok i   { background: var(--s2); box-shadow: 0 0 6px var(--s2); }
+  .src.bad i  { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
+  .src.off i  { background: var(--border-hi); }
+
+  .endpoint {
+    display: flex; align-items: center;
+    border: 1px solid var(--border-hi); border-radius: 8px;
+    background: var(--surface-1); overflow: hidden;
+  }
+  .endpoint:focus-within {
+    border-color: var(--s1);
+    box-shadow: 0 0 0 1px rgba(34,211,238,.30), 0 0 22px rgba(34,211,238,.16);
+  }
+  .endpoint .tag {
+    font-size: 10.3px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--text-muted); padding: 0 8px; border-right: 1px solid var(--border);
+    align-self: stretch; display: flex; align-items: center; background: var(--surface-2);
+  }
+  .endpoint input {
+    background: transparent; border: 0; outline: none; color: var(--s1);
+    font: 13.8px var(--mono); padding: 5px 9px; width: 190px;
+  }
+  .endpoint input::placeholder { color: var(--text-muted); }
+  .endpoint button { border: 0; border-left: 1px solid var(--border); border-radius: 0; padding: 5px 11px; background: var(--surface-2); }
+  .endpoint button:hover { background: var(--s1); color: #000; }
+
+  button {
+    background: var(--surface-1); color: var(--text-secondary);
+    border: 1px solid var(--border-hi); border-radius: 8px;
+    padding: 4px 9px; font: 12.6px var(--mono); cursor: pointer;
+    letter-spacing: .06em; text-transform: uppercase; transition: .12s;
+  }
+  button:hover { color: var(--text-primary); border-color: var(--s1); }
+  button[aria-pressed="true"] { color: var(--s1); border-color: var(--s1); }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-muted); }
+  .dot.live { background: var(--s2); box-shadow: 0 0 9px var(--s2), 0 0 3px var(--s2); }
+  .dot.err  { background: var(--crit); box-shadow: 0 0 9px var(--crit); }
+  .dot.idle { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  .dot.busy { animation: pulse 1s ease-in-out infinite; }
+
+  /* ---------------- model strip ---------------- */
+  .strip {
+    display: grid; grid-template-columns: minmax(230px, 19%) 1fr minmax(170px, auto);
+    gap: 14px; align-items: center;
+    background: linear-gradient(100deg, rgba(34,211,238,.07), rgba(255,77,157,.05) 55%, transparent);
+    border: 1px solid var(--border-hi); border-radius: 9px;
+    padding: 7px 12px;
+  }
+  .eyebrow { font-size: 10.3px; letter-spacing: .15em; text-transform: uppercase; color: var(--text-muted); }
+  .mname {
+    font-size: 18.4px; font-weight: 700; line-height: 1.15;
+    color: var(--s1); text-shadow: 0 0 20px rgba(34,211,238,.45);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mid { font-size: 12.1px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; max-height: 44px; overflow: hidden; align-content: center; }
+  .chip {
+    font-size: 10.9px; padding: 1px 6px; border-radius: 5px; white-space: nowrap;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .chip b { color: var(--text-primary); font-weight: 600; }
+  .chip.hi { border-color: var(--border-hi); }
+  .chip.hi b { color: var(--s3); }
+
+  /* ---------------- stat tiles ---------------- */
+  .tiles { display: grid; gap: 7px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  @media (max-width: 1900px) { .tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .tile {
+    background: linear-gradient(180deg, var(--surface-1), #05050a);
+    border: 1px solid var(--border); border-radius: 9px; padding: 6px 9px 7px;
+    position: relative; overflow: hidden; min-width: 0;
+  }
+  .tile::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+    background: var(--accent, var(--s1)); opacity: .85;
+    box-shadow: 0 0 12px var(--accent, var(--s1));
+  }
+  /* Background trend: costs no vertical space and gives every tile a pulse
+     even when the headline number is standing still. */
+  .tile .tsp { position: absolute; inset: auto 0 0 0; width: 100%; height: 62%;
+               opacity: .32; pointer-events: none; }
+  .tile .k, .tile .v, .tile .foot, .tile .meter { position: relative; z-index: 1; }
+  .tile .k {
+    font-size: 9.8px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tile .v {
+    font-size: clamp(19.5px, 1.55vw, 27.6px); font-weight: 700; letter-spacing: -.02em; line-height: 1.15;
+    margin-top: 3px; font-variant-numeric: tabular-nums; white-space: nowrap;
+    color: var(--accent, var(--s1)); text-shadow: 0 0 18px var(--glow, rgba(34,211,238,.4));
+  }
+  .tile .v .u { font-size: 10.9px; font-weight: 500; color: var(--text-muted); margin-left: 3px; text-shadow: none; }
+  .tile .foot {
+    font-size: 10.3px; color: var(--text-muted); margin-top: 3px; line-height: 1.3;
+    font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .meter { height: 3px; background: var(--surface-3); border-radius: 3px; margin-top: 5px; overflow: hidden; }
+  .meter > i {
+    display: block; height: 100%; border-radius: 3px;
+    background: var(--accent, var(--s1)); box-shadow: 0 0 10px var(--accent, var(--s1));
+    transition: width .35s ease;
+  }
+
+  /* ---------------- chart deck ----------------
+     Four columns across a 2560px display; each column is a vertical
+     stack whose panels divide the deck height by fr, so the deck always
+     ends exactly at the bottom of the viewport. */
+  /* A real 2-D grid rather than four independent stacks, so the scoreboard can
+     span the bottom-right instead of being a narrow scroller.
+     minmax(0, …) on the rows: a bare fr track still takes its items' min-content
+     as a floor, which would let a long table push the deck past the viewport. */
+  .deck {
+    display: grid; gap: 8px; min-height: 0;
+    grid-template-columns: 1fr .95fr 1.18fr 1.12fr;
+    grid-template-rows: minmax(0, 1.06fr) minmax(0, .98fr) minmax(0, 1.2fr);
+    grid-template-areas:
+      "live  ctx    req   gpu"
+      "itl   spec   req   gpu"
+      "day   events fleet fleet";
+  }
+  @media (max-width: 1900px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100dvh; }
+    .deck {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: none; grid-auto-rows: minmax(240px, auto);
+      grid-template-areas:
+        "live  ctx"  "itl   spec"  "day   events"
+        "req   gpu"  "fleet fleet";
+    }
+  }
+  @media (max-width: 1100px) {
+    .deck {
+      grid-template-columns: 1fr;
+      grid-template-areas: "live" "ctx" "itl" "spec" "day" "events" "req" "gpu" "fleet";
+    }
+  }
+
+  /* GPU panel holds two stacked charts sharing one legend. */
+  .dualchart { flex: 0 0 44%; min-height: 140px; display: grid; gap: 5px;
+               grid-template-rows: repeat(2, minmax(0, 1fr)); }
+
+  /* Scoreboard: wide table plus a narrow session-totals rail. */
+  .fleetwrap { flex: 1 1 auto; min-height: 0; display: flex; }
+  .fleetwrap > .scroll { min-width: 0; flex: 1 1 auto; }
+  #fleetTable td, .fleetwrap th { padding: 2.5px 5px; }
+  .spark { display: block; }
+
+  .panel {
+    background: linear-gradient(180deg, var(--surface-1), #05050a);
+    border: 1px solid var(--border); border-radius: 9px;
+    padding: 7px 10px 8px; min-height: 0; min-width: 0;
+    display: flex; flex-direction: column;
+  }
+  .panel > h2 {
+    font-size: 10.9px; font-weight: 700; margin: 0 0 5px;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 7px; flex: none;
+  }
+  .panel > h2 .ttl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note { font-size: 10.3px; color: var(--text-muted); margin: -2px 0 5px; flex: none;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chartbox { position: relative; flex: 1 1 auto; min-height: 0; }
+  svg.chart { display: block; width: 100%; height: 100%; overflow: visible; }
+  .legend { display: flex; gap: 9px; flex-wrap: wrap; font-size: 10.3px; flex: none;
+            color: var(--text-secondary); letter-spacing: .06em; text-transform: uppercase; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend i { width: 9px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  .tip {
+    position: absolute; pointer-events: none; z-index: 20; opacity: 0;
+    background: #0b0b12; border: 1px solid var(--border-hi); border-radius: 7px;
+    padding: 5px 8px; font-size: 12.1px; white-space: nowrap; color: var(--text-primary);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 8px 26px rgba(0,0,0,.75);
+    transition: opacity .1s;
+  }
+  .tip .tt { color: var(--text-muted); font-size: 10.3px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 2px; }
+  .tip .tr { display: flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+  .tip .tr i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .tip .tr b { margin-left: auto; padding-left: 12px; font-weight: 700; }
+
+  /* per-request small multiples: never more than 2 across, or the axis
+     labels collide once the panel narrows */
+  #reqCharts { flex: 1 1 auto; min-height: 0; display: grid; gap: 6px 10px;
+               grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+  #reqCharts > div { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+
+  /* ---------------- tables ---------------- */
+  .scroll { overflow: auto; flex: 1 1 auto; min-height: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.1px; }
+  th, td { text-align: left; padding: 2.5px 6px; border-bottom: 1px solid var(--border); }
+  th { font-size: 9.8px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted);
+       position: sticky; top: 0; background: #07070c; z-index: 1; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr.active { background: rgba(34,211,238,.08); }
+  tbody tr.active td:first-child { color: var(--s1); }
+  tbody tr.pick { cursor: pointer; }
+  tbody tr.pick:hover { background: var(--surface-2); }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 10.3px;
+    padding: 0 5px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-muted);
+    letter-spacing: .07em; text-transform: uppercase; white-space: nowrap;
+  }
+  .badge.on   { border-color: var(--s2); color: var(--s2); box-shadow: 0 0 10px rgba(163,230,53,.16); }
+  .badge.warn { border-color: var(--warn); color: var(--warn); }
+  .badge.crit { border-color: var(--crit); color: var(--crit); }
+
+  .log { font-size: 12.1px; }
+  .log .row { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+  .log .row:last-child { border-bottom: 0; }
+  .log time { color: var(--text-muted); flex: none; font-variant-numeric: tabular-nums; }
+  .log .msg { color: var(--text-secondary); }
+  .log .msg b { color: var(--s1); font-weight: 600; }
+
+  /* ---------------- host / accelerator panel ---------------- */
+  .hostgrid { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .hrow { display: grid; grid-template-columns: 52px 1fr auto; gap: 7px; align-items: center; font-size: 11.5px; }
+  .hrow .hk { color: var(--text-muted); font-size: 10.3px; letter-spacing: .1em; text-transform: uppercase; }
+  .hrow .hv { color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11.5px; }
+  .bar { height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden; position: relative; }
+  .bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent, var(--s1));
+             box-shadow: 0 0 8px var(--accent, var(--s1)); transition: width .35s ease; }
+  .cores { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 1.5px; }
+  .cores i { display: block; height: 9px; border-radius: 1.5px; background: var(--surface-3); }
+  /* The GPU panel gets a little more presence than its neighbours: a faint
+     inner glow along the top edge, matching the tile accent language. */
+  .gpupanel {
+    background:
+      radial-gradient(120% 80% at 50% 0%, rgba(34,211,238,.09), transparent 62%),
+      linear-gradient(180deg, var(--surface-1), #05050a);
+    border-color: var(--border-hi);
+  }
+  .gpucard { border: 1px solid var(--border); border-radius: 7px; padding: 5px 7px; background: var(--surface-1); }
+  .gpucard .gname { font-size: 10.9px; color: var(--text-secondary); display: flex; gap: 6px; align-items: center; }
+  .gpucard .gname b { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nosrc { font-size: 10.9px; color: var(--text-muted); line-height: 1.5; border: 1px dashed var(--border-hi);
+           border-radius: 7px; padding: 6px 8px; }
+  .nosrc code { color: var(--s1); }
+
+  /* ---------------- percentile panel ---------------- */
+  .pcts { display: flex; flex-direction: column; justify-content: space-around; flex: 1 1 auto; min-height: 0; gap: 4px; }
+  .pctrow { min-width: 0; }
+  .pctrow .ph { display: flex; align-items: baseline; gap: 6px; font-size: 10.3px;
+                letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); }
+  .pctrow .ph em { font-style: normal; color: var(--text-secondary); letter-spacing: 0; text-transform: none; }
+  .pctrow svg { display: block; width: 100%; height: 42px; overflow: visible; }
+
+  .err-banner {
+    position: fixed; left: 12px; bottom: 10px; z-index: 50; max-width: 640px;
+    background: rgba(20,4,12,.96); border: 1px solid var(--crit);
+    border-radius: 8px; padding: 7px 11px; font-size: 13.2px;
+    box-shadow: 0 0 24px rgba(255,77,157,.2);
+  }
+  .err-banner b { color: var(--crit); }
+  [hidden] { display: none !important; }
+  .muted { color: var(--text-muted); }
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 5px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <span class="dot" id="connDot" title="connection"></span>
+    <h1>llama.cpp rig</h1>
+    <span class="muted" id="hostLabel" style="font-size: 12.1px"></span>
+    <div class="srcs">
+      <span class="src" id="srcSwap"  title="llama-swap /v1/models + /running"><i></i>swap</span>
+      <span class="src" id="srcLlama" title="llama-server /slots + /metrics via the read-only monitor"><i></i>llama</span>
+      <span class="src" id="srcHost"  title="llama-swap /metrics — CPU, RAM, swap, load, network"><i></i>host</span>
+      <span class="src" id="srcGpu"   title="GPU telemetry source"><i></i>gpu</span>
+    </div>
+    <div class="spacer"></div>
+    <span class="muted" id="upLabel" style="font-size: 12.1px"></span>
+    <div class="endpoint">
+      <span class="tag">server</span>
+      <input id="hostInput" list="hostHistory" spellcheck="false" autocomplete="off"
+             placeholder="llama-host:8080" aria-label="llama-swap server host and port">
+      <datalist id="hostHistory"></datalist>
+      <button id="applyBtn" title="Connect to this server">Connect</button>
+    </div>
+    <button id="pauseBtn" aria-pressed="false">Pause</button>
+    <span class="muted" id="clock" style="font-size: 12.1px"></span>
+  </header>
+
+  <section class="strip">
+    <div style="min-width:0">
+      <div class="eyebrow">Active model</div>
+      <div class="mname" id="mName">—</div>
+      <div class="mid" id="mId">waiting for endpoint…</div>
+    </div>
+    <div style="min-width:0">
+      <div class="eyebrow" style="margin-bottom:3px">Launch configuration</div>
+      <div class="chips" id="cfgChips"><span class="chip muted">reading /running…</span></div>
+    </div>
+    <div style="min-width:0">
+      <div class="eyebrow">Runtime</div>
+      <div style="display:flex;align-items:center;gap:7px;margin:2px 0 3px">
+        <span class="dot" id="stateDot"></span>
+        <span id="stateText" style="font-size: 16.1px;font-weight:700;letter-spacing:.03em">—</span>
+      </div>
+      <div class="chips" id="rtChips"></div>
+    </div>
+  </section>
+
+  <div class="tiles">
+    <div class="tile" style="--accent:var(--s1);--glow:rgba(34,211,238,.45)">
+      <svg class="tsp" id="sp_tgLive" aria-hidden="true"></svg>
+      <div class="k">Decode · live</div>
+      <div class="v" id="tgLive">—<span class="u">tok/s</span></div>
+      <div class="foot" id="tgLiveFoot">generation rate</div>
+    </div>
+    <div class="tile" style="--accent:var(--s2);--glow:rgba(163,230,53,.4)">
+      <svg class="tsp" id="sp_ppLast" aria-hidden="true"></svg>
+      <div class="k">Prefill · last</div>
+      <div class="v" id="ppLast">—<span class="u">tok/s</span></div>
+      <div class="foot" id="ppLastFoot">prompt processing</div>
+    </div>
+    <div class="tile" style="--accent:var(--s3);--glow:rgba(167,139,250,.42)">
+      <svg class="tsp" id="sp_ttft" aria-hidden="true"></svg>
+      <div class="k">TTFT</div>
+      <div class="v" id="ttft">—<span class="u">s</span></div>
+      <div class="foot" id="ttftFoot">prefill wall time</div>
+    </div>
+    <div class="tile" style="--accent:var(--s3);--glow:rgba(167,139,250,.42)">
+      <svg class="tsp" id="sp_itl" aria-hidden="true"></svg>
+      <div class="k">Inter-token lat.</div>
+      <div class="v" id="itl">—<span class="u">ms/tok</span></div>
+      <div class="foot" id="itlFoot">what streaming feels like</div>
+    </div>
+    <div class="tile" style="--accent:var(--s4);--glow:rgba(251,191,36,.4)">
+      <svg class="tsp" id="sp_ctxPct" aria-hidden="true"></svg>
+      <div class="k">Context used</div>
+      <div class="v" id="ctxPct">—<span class="u">%</span></div>
+      <div class="meter"><i id="ctxBar" style="width:0%"></i></div>
+      <div class="foot" id="ctxFoot">— / — tokens</div>
+    </div>
+    <div class="tile" style="--accent:var(--s4);--glow:rgba(251,191,36,.4)">
+      <svg class="tsp" id="sp_vramPct" aria-hidden="true"></svg>
+      <div class="k">VRAM</div>
+      <div class="v" id="vramPct">—<span class="u">%</span></div>
+      <div class="meter"><i id="vramBar" style="width:0%"></i></div>
+      <div class="foot" id="vramFoot">across all cards</div>
+    </div>
+    <div class="tile" style="--accent:var(--s5);--glow:rgba(255,77,157,.4)">
+      <svg class="tsp" id="sp_cacheHit" aria-hidden="true"></svg>
+      <div class="k">Prompt cache hit</div>
+      <div class="v" id="cacheHit">—<span class="u">%</span></div>
+      <div class="meter"><i id="cacheBar" style="width:0%"></i></div>
+      <div class="foot" id="cacheFoot">reused prompt tokens</div>
+    </div>
+    <div class="tile" style="--accent:var(--s5);--glow:rgba(255,77,157,.4)">
+      <svg class="tsp" id="sp_specTile" aria-hidden="true"></svg>
+      <div class="k">Spec · tok/pass</div>
+      <div class="v" id="specTile">—</div>
+      <div class="foot" id="specFoot">draft acceptance</div>
+    </div>
+    <div class="tile" style="--accent:var(--s1);--glow:rgba(34,211,238,.4)">
+      <svg class="tsp" id="sp_gpuW" aria-hidden="true"></svg>
+      <div class="k">GPU power</div>
+      <div class="v" id="gpuW">—<span class="u">W</span></div>
+      <div class="meter"><i id="gpuWBar" style="width:0%"></i></div>
+      <div class="foot" id="gpuWFoot">of card limits</div>
+    </div>
+    <div class="tile" style="--accent:var(--s2);--glow:rgba(163,230,53,.4)">
+      <svg class="tsp" id="sp_peakCtx" aria-hidden="true"></svg>
+      <div class="k">Peak context</div>
+      <div class="v" id="peakCtx">—<span class="u">tok</span></div>
+      <div class="foot" id="peakCtxFoot">deepest prompt seen</div>
+    </div>
+    <div class="tile" style="--accent:var(--s4);--glow:rgba(251,191,36,.4)">
+      <svg class="tsp" id="sp_sessOut" aria-hidden="true"></svg>
+      <div class="k">Session output</div>
+      <div class="v" id="sessOut">—</div>
+      <div class="foot" id="sessOutFoot">tokens generated</div>
+    </div>
+    <div class="tile" style="--accent:var(--s5);--glow:rgba(255,77,157,.4)">
+      <svg class="tsp" id="sp_ramTile" aria-hidden="true"></svg>
+      <div class="k">Host memory</div>
+      <div class="v" id="ramTile">—<span class="u">%</span></div>
+      <div class="meter"><i id="ramTileBar" style="width:0%"></i></div>
+      <div class="foot" id="ramTileFoot">system RAM</div>
+    </div>
+  </div>
+
+  <main class="deck">
+
+    <section class="panel" style="grid-area:live">
+      <h2><span class="ttl">Live generation throughput</span><span class="badge" id="liveWindowBadge">last 180 s</span></h2>
+      <div class="chartbox">
+        <svg class="chart" id="liveChart" role="img" aria-label="Live token generation rate over the last 180 seconds"></svg>
+        <div class="tip" id="liveTip"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-area:itl">
+      <h2><span class="ttl">Inter-token latency</span><span class="badge" id="itlBadge">—</span></h2>
+      <div class="chartbox">
+        <svg class="chart" id="itlChart" role="img" aria-label="Milliseconds per generated token over time"></svg>
+        <div class="tip" id="itlTip"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-area:day">
+      <h2><span class="ttl">24 h activity</span><span class="badge" id="dayBadge">—</span></h2>
+      <div class="legend" style="margin-bottom:3px">
+        <span><i style="background:var(--s4)"></i>Generated</span>
+        <span><i style="background:var(--s3)"></i>Prompt in</span>
+      </div>
+      <div class="chartbox">
+        <svg class="chart" id="dayChart" role="img" aria-label="Tokens processed per hour over the last 24 hours"></svg>
+        <div class="tip" id="dayTip"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-area:ctx">
+      <h2><span class="ttl">Context window fill</span><span class="badge" id="ctxBadge">—</span></h2>
+      <div class="chartbox">
+        <svg class="chart" id="ctxChart" role="img" aria-label="Context window occupancy over time"></svg>
+        <div class="tip" id="ctxTip"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-area:spec">
+      <h2><span class="ttl">Speculative decode</span><span class="badge" id="specBadge">—</span></h2>
+      <p class="note" id="specNote">accepted tokens per forward pass, one point per completed request</p>
+      <div class="chartbox">
+        <svg class="chart" id="specChart" role="img" aria-label="Accepted tokens per forward pass per request"></svg>
+        <div class="tip" id="specTip"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-area:events">
+      <h2><span class="ttl">Events</span></h2>
+      <div class="scroll log" id="eventLog"></div>
+    </section>
+
+    <section class="panel" style="grid-area:req">
+      <h2><span class="ttl">Per-request metrics</span>
+        <span class="badge" id="reqCountBadge">0 req</span>
+        <span class="spacer"></span>
+        <button id="tableBtn" aria-pressed="false">Table</button>
+      </h2>
+      <div id="reqCharts">
+        <div>
+          <div class="legend"><span><i style="background:var(--s2)"></i>Prefill tok/s</span></div>
+          <div class="chartbox">
+            <svg class="chart" id="ppChart" role="img" aria-label="Prompt processing tokens per second per request"></svg>
+            <div class="tip" id="ppTip"></div>
+          </div>
+        </div>
+        <div>
+          <div class="legend"><span><i style="background:var(--s1)"></i>Decode tok/s</span></div>
+          <div class="chartbox">
+            <svg class="chart" id="tgChart" role="img" aria-label="Token generation tokens per second per request"></svg>
+            <div class="tip" id="tgTip"></div>
+          </div>
+        </div>
+        <div>
+          <div class="legend"><span><i style="background:var(--s3)"></i>TTFT (s)</span></div>
+          <div class="chartbox">
+            <svg class="chart" id="ttftChart" role="img" aria-label="Time to first token per request"></svg>
+            <div class="tip" id="ttftTip"></div>
+          </div>
+        </div>
+        <div>
+          <div class="legend"><span><i style="background:var(--s4)"></i>Tokens generated</span></div>
+          <div class="chartbox">
+            <svg class="chart" id="outChart" role="img" aria-label="Output tokens generated per request"></svg>
+            <div class="tip" id="outTip"></div>
+          </div>
+        </div>
+      </div>
+      <div class="scroll" id="reqTableWrap" hidden>
+        <table>
+          <thead><tr>
+            <th>#</th><th>Time</th><th>Model</th><th class="num">In</th><th class="num">Out</th>
+            <th class="num">Prefill t/s</th><th class="num">Decode t/s</th>
+            <th class="num">TTFT s</th><th class="num">ITL ms</th><th class="num">E2E s</th>
+          </tr></thead>
+          <tbody id="reqTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel gpupanel" style="grid-area:gpu">
+      <h2><span class="ttl">GPU &amp; host</span><span class="badge" id="rigBadge">—</span><span class="badge" id="hostBadge">—</span></h2>
+      <div class="legend" id="rigLegend" style="margin-bottom:2px"></div>
+      <div class="dualchart">
+        <div class="chartbox">
+          <svg class="chart" id="computeChart" role="img" aria-label="GPU and CPU utilisation over time"></svg>
+          <div class="tip" id="computeTip"></div>
+        </div>
+        <div class="chartbox">
+          <svg class="chart" id="memChart" role="img" aria-label="GPU VRAM and host memory over time"></svg>
+          <div class="tip" id="memTip"></div>
+        </div>
+      </div>
+      <div class="hostgrid" id="hostGrid">
+        <div class="muted" style="font-size:11.5px">reading telemetry…</div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-area:fleet">
+      <h2><span class="ttl">Fleet &amp; measured performance</span>
+        <span class="badge" id="fleetBadge">—</span>
+        <span class="badge" id="histBadge">24 h</span>
+      </h2>
+      <div class="fleetwrap">
+        <div class="scroll">
+          <table><thead><tr>
+            <th>Model</th><th>State</th>
+            <th class="num" title="Tokens generated in the last 24 h">24h out</th>
+            <th title="Hourly tokens generated, last 24 h">usage</th>
+            <th class="num" title="Prompt tokens in, last 24 h">24h in</th>
+            <th class="num" title="Generations in the last 24 h">24h req</th>
+            <th class="num" title="Prompt tokens this session">sess in</th>
+            <th class="num" title="Tokens generated this session">sess out</th>
+            <th class="num" title="Requests measured this session">sess req</th>
+            <th class="num" title="Median decode rate, this session">t/s</th>
+            <th class="num" title="Median prefill rate, this session">pp t/s</th>
+            <th class="num" title="Median time to first token, this session">TTFT</th>
+            <th class="num" title="Median inter-token latency, this session">ITL</th>
+            <th class="num" title="Median accepted tokens per forward pass">Spec</th>
+            <th class="num" title="VRAM held while loaded">VRAM</th>
+            <th class="num" title="Time from loading to loaded">Load</th>
+          </tr></thead><tbody id="fleetTable"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="err-banner" id="errBanner" hidden></div>
+
+<script>
+"use strict";
+
+/* ============================ config ============================ */
+// When served by llama-host-agent, default to llama-swap on the same machine.
+// A file:// launch falls back to localhost and can be overridden in the UI or
+// with ?host=server.example:8080.
+const DEFAULT_HOST = location.protocol === "http:" || location.protocol === "https:"
+  ? `${location.protocol}//${location.hostname}:8080`
+  : "http://localhost:8080";
+const POLL_SLOTS   = 600;
+const POLL_METRICS = 1200;
+const POLL_MODELS  = 500;
+const POLL_HOST    = 2000;
+const POLL_RUNNING = 4000;
+const POLL_GPU     = 1500;
+const GPU_PROBE    = 30000;
+const TELEMETRY_TIMEOUT = 1000;
+const LIVE_WINDOW  = 180;
+const MAX_REQ      = 300;   // spans several models now that swaps don't reset
+
+const qs = new URLSearchParams(location.search);
+const $  = id => document.getElementById(id);
+
+/** Accept "llama-host:8080", "localhost:8080", or a full URL. */
+function normalizeHost(v) {
+  let s = (v || "").trim().replace(/\/+$/, "");
+  if (!s) return "";
+  if (!/^https?:\/\//i.test(s)) s = "http://" + s;
+  return s;
+}
+function withPort(host, port) {
+  const u = new URL(host);
+  u.port = port; u.pathname = ""; u.search = ""; u.hash = "";
+  return u.origin;
+}
+function monitorHost(host) { return withPort(host, qs.get("monitorPort") || "8081"); }
+
+let HOST = normalizeHost(qs.get("host") || localStorage.getItem("llamaLiveHost") || DEFAULT_HOST);
+let MONITOR_HOST = monitorHost(HOST);
+
+/* llama-swap (v240) answers /v1/* with Access-Control-Allow-Origin but sends
+   no CORS headers at all on /metrics or /running — so a browser blocks those
+   two outright while the model list loads fine. Anything needing them goes
+   through resolveSwap(): try direct first (in case CORS ever gets enabled),
+   then any proxy we can find, and remember whichever answered. */
+function swapBases() {
+  const out = [HOST];
+  const p = qs.get("proxy") || localStorage.getItem("llamaLiveProxy");
+  if (p) out.push(normalizeHost(p));
+  if (location.protocol.startsWith("http")) out.push(location.origin);
+  out.push(withPort(HOST, "8888"));
+  return [...new Set(out)];
+}
+
+async function swapFetch(path, asText, ms = 3000) {
+  const bases = S.swapBase ? [S.swapBase] : swapBases();
+  let lastErr = null, blocked = 0;
+  for (const b of bases) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    try {
+      const r = await fetch(b + path, { signal: c.signal, cache: "no-store" });
+      if (!r.ok) { lastErr = new Error("HTTP " + r.status + " on " + path); continue; }
+      const v = asText ? await r.text() : await r.json();
+      if (S.swapBase !== b) {
+        S.swapBase = b;
+        logEvent(`${path} via <b>${b === HOST ? "direct" : b}</b>`);
+      }
+      S.swapErr = null;
+      return v;
+    } catch (e) {
+      // A fetch that rejects without ever producing a Response is what a CORS
+      // block looks like from script; a real 4xx/5xx would have returned above.
+      if (e.name === "TypeError") blocked++;
+      lastErr = e;
+    } finally { clearTimeout(t); }
+  }
+  S.swapBase = null;
+  S.swapErr = blocked ? "cors" : "unreachable";
+  throw lastErr || new Error("no transport for " + path);
+}
+
+/* GPU telemetry has no guaranteed home on this rig, so the page hunts for one.
+   The explicit override wins, then whatever proxy already answered for
+   /metrics, then the page's own origin, then plausible ports. Everything is
+   optional — absent all of them the panel says so instead of lying. */
+function gpuCandidates() {
+  const out = [];
+  const override = qs.get("gpu") || localStorage.getItem("llamaLiveGpu");
+  if (override) out.push(normalizeHost(override.includes("/") ? override : override + "/gpu"));
+  if (S.agentBase) out.push(S.agentBase + "/gpu");  // llama-host-agent
+  if (S.swapBase && S.swapBase !== HOST) out.push(S.swapBase + "/gpu");
+  if (location.protocol.startsWith("http")) out.push(location.origin + "/gpu");
+  out.push(withPort(HOST, "8082") + "/gpu");        // agent default port
+  out.push(withPort(HOST, "8888") + "/gpu");        // CORS proxy / nvidia-smi shim
+  out.push(MONITOR_HOST + "/gpu");                  // read-only monitor, if it grows one
+  out.push(withPort(HOST, "9835") + "/metrics");    // nvidia_gpu_exporter
+  out.push(withPort(HOST, "9400") + "/metrics");    // DCGM exporter
+  return [...new Set(out)];
+}
+
+function recentHosts() {
+  try { return JSON.parse(localStorage.getItem("llamaLiveRecent") || "[]"); } catch { return []; }
+}
+function rememberHost(h) {
+  const list = [h, ...recentHosts().filter(x => x !== h)].slice(0, 6);
+  localStorage.setItem("llamaLiveRecent", JSON.stringify(list));
+  renderHostList();
+}
+function renderHostList() {
+  $("hostHistory").innerHTML = recentHosts().map(h => `<option value="${h}">`).join("");
+}
+
+/* ============================ state ============================ */
+const S = {
+  paused: false, models: [], active: null, props: null, slots: [],
+  metrics: null, decode: { taskId: null, n: 0, t: 0, ema: null },
+  live: [], ctxHist: [], rigHist: [], reqs: [],
+  pending: null, pre: null, reqSeq: 0,
+  switches: [], byModel: {}, metricsBy: {}, loadStart: {},
+  running: null, cfg: null, loadedAt: null,
+  swapBase: null, swapErr: null,
+  host: null, netMark: null, agentBase: null, agentProbedAt: 0,
+  gpu: null, gpuUrl: null, gpuKind: null, gpuProbedAt: 0,
+  history: null, histAt: 0, fleetAt: 0, fleetSig: null,
+  lastOk: 0, err: null, events: [],
+  ok: { swap: null, llama: null, host: null, gpu: null },
+};
+const telemetryFetches = new Set();
+
+/* ============================ utils ============================ */
+const now = () => performance.now() / 1000;
+function fmt(n, d = 1) {
+  if (n === null || n === undefined || !isFinite(n)) return "—";
+  return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function fmtInt(n) {
+  if (n === null || n === undefined || !isFinite(n)) return "—";
+  return Math.round(n).toLocaleString();
+}
+function fmtBig(n) {
+  if (!isFinite(n) || n === null) return "—";
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(Math.round(n));
+}
+function fmtBytes(b) {
+  if (!isFinite(b) || b === null) return "—";
+  const u = ["B", "K", "M", "G", "T"];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + u[i];
+}
+function fmtDur(s) {
+  if (!isFinite(s) || s < 0) return "—";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m ${Math.floor(s % 60)}s`;
+}
+const clockStr = (d = new Date()) => d.toLocaleTimeString(undefined, { hour12: false });
+
+/** Nearest-rank percentile over an already-sorted ascending array. */
+function pct(sorted, p) {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p / 100 * sorted.length) - 1));
+  return sorted[i];
+}
+
+async function getJSON(path, ms = 4500) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(HOST + path, { signal: c.signal, cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status + " on " + path);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+async function getMonitor(id, endpoint, asText, ms = TELEMETRY_TIMEOUT) {
+  const path = `/model/${encodeURIComponent(id)}/${endpoint}`;
+  const c = new AbortController();
+  telemetryFetches.add(c);
+  const t = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(MONITOR_HOST + path, { signal: c.signal, cache: "no-store" });
+    if (r.status === 409 || r.status === 501) return null;
+    if (!r.ok) throw new Error("HTTP " + r.status + " on read-only telemetry " + endpoint);
+    return asText ? await r.text() : await r.json();
+  } finally { clearTimeout(t); telemetryFetches.delete(c); }
+}
+const getMonitorJSON = (id, ep, ms) => getMonitor(id, ep, false, ms);
+const getMonitorText = (id, ep, ms) => getMonitor(id, ep, true, ms);
+
+/* ---------- Prometheus parsing ----------
+   Two shapes are needed: a flat map for llama.cpp's unlabelled series, and a
+   labelled index for llama-swap's host metrics (per-core CPU, per-interface
+   network) where the labels carry the dimension. */
+function parseProm(txt) {
+  const out = {};
+  for (const line of txt.split("\n")) {
+    const s = line.trim();
+    if (!s || s[0] === "#") continue;
+    const i = s.lastIndexOf(" ");
+    if (i < 0) continue;
+    const v = parseFloat(s.slice(i + 1));
+    if (isFinite(v)) out[s.slice(0, i).trim()] = v;
+  }
+  return out;
+}
+function parsePromLabeled(txt) {
+  const out = {};
+  for (const line of txt.split("\n")) {
+    const s = line.trim();
+    if (!s || s[0] === "#") continue;
+    const i = s.lastIndexOf(" ");
+    if (i < 0) continue;
+    const v = parseFloat(s.slice(i + 1));
+    if (!isFinite(v)) continue;
+    const key = s.slice(0, i).trim();
+    const br = key.indexOf("{");
+    const name = br < 0 ? key : key.slice(0, br);
+    const labels = {};
+    if (br >= 0) {
+      const body = key.slice(br + 1, key.lastIndexOf("}"));
+      for (const m of body.matchAll(/(\w+)="([^"]*)"/g)) labels[m[1]] = m[2];
+    }
+    (out[name] ||= []).push({ labels, v });
+  }
+  return out;
+}
+const promVal = (idx, name) => (idx[name] && idx[name].length ? idx[name][0].v : null);
+function promWhere(idx, name, key, val) {
+  const s = idx[name] || [];
+  const hit = s.find(x => x.labels[key] === val);
+  return hit ? hit.v : null;
+}
+
+function logEvent(msg) {
+  S.events.unshift({ t: new Date(), msg });
+  if (S.events.length > 80) S.events.pop();
+  renderLog();
+}
+function trim(arr, t) {
+  const cut = t - LIVE_WINDOW;
+  while (arr.length && arr[0].t < cut) arr.shift();
+}
+
+/* ============================ polling ============================ */
+async function pollModels() {
+  const d = await getJSON("/v1/models");
+  const list = (d.data || []).map(m => ({
+    id: m.id, name: m.name || "", description: m.description || "",
+    state: (m.status && m.status.value) || "unknown",
+  }));
+  const prev = new Map(S.models.map(m => [m.id, m.state]));
+  for (const m of list) {
+    const p = prev.get(m.id);
+    if (p === undefined || p === m.state) continue;
+    logEvent(`<b>${m.id}</b> ${p} &rarr; ${m.state}`);
+    // Time the swap. Only meaningful now that we sit on the host and can see
+    // the disk read it costs; llama-swap itself never reports it.
+    if (m.state === "loading") S.loadStart[m.id] = Date.now();
+    else if (m.state === "loaded" && S.loadStart[m.id]) {
+      const ms = Date.now() - S.loadStart[m.id];
+      delete S.loadStart[m.id];
+      rollup(m.id).loadMs = ms;
+      logEvent(`<b>${m.id}</b> loaded in ${fmt(ms / 1000, 1)}s`);
+    }
+  }
+  S.models = list;
+
+  const loaded = list.filter(m => m.state === "loaded");
+  if (!loaded.some(m => m.id === S.active)) {
+    const next = loaded.length ? loaded[0].id : null;
+    if (next !== S.active) {
+      if (next) logEvent(`active model &rarr; <b>${next}</b>`);
+      else if (S.active) logEvent(`<b>${S.active}</b> unloaded — nothing running`);
+      setActive(next);
+    }
+  }
+  S.ok.swap = true;
+}
+
+/* A model switch used to wipe every series. It no longer does: history is kept
+   and each sample carries the model it came from, so the timeline survives a
+   swap. Only three things genuinely belong to the model being left — the
+   decode-rate baseline, the half-finished request scratch, and the cached
+   props/slots — and those are reset. Counter baselines live per model in
+   S.metricsBy so switching back and forth keeps producing correct deltas. */
+function setActive(id) {
+  if (id !== S.active) {
+    for (const c of telemetryFetches) c.abort();
+    telemetryFetches.clear();
+    if (S.active || id) {
+      S.switches.push({ t: now(), at: new Date(), from: S.active, to: id });
+      while (S.switches.length > 40) S.switches.shift();
+    }
+    if (id) rollup(id).lastSeen = Date.now();
+  }
+  S.active = id;
+  S.props = null; S.slots = [];
+  S.metrics = (id && S.metricsBy[id]) || null;
+  S.decode = { taskId: null, n: 0, t: 0, ema: null };
+  S.pending = null; S.pre = null;
+  S.cfg = null; S.loadedAt = id ? Date.now() : null;
+}
+
+/** Per-model accumulator. Distributions must never be pooled across models —
+    a p95 mixing a 27B and a 9B is a number neither of them ever produced. */
+function rollup(id) {
+  return (S.byModel[id] ||= {
+    reqs: 0, tokIn: 0, tokOut: 0, tg: [], pp: [], ttft: [], itl: [], spec: [],
+    vram: null, loadMs: null, firstSeen: Date.now(), lastSeen: Date.now(),
+  });
+}
+function keep(arr, v, cap = 400) {
+  if (v === null || !isFinite(v)) return;
+  arr.push(v);
+  if (arr.length > cap) arr.shift();
+}
+const shortModel = id => !id ? "—" : (id.length > 18 ? id.slice(0, 17) + "…" : id);
+
+function isLoaded(id) {
+  return !!id && S.models.some(m => m.id === id && m.state === "loaded");
+}
+
+/* llama-swap knows the exact argv of the child it started. That argv is the
+   only place the rig's real shape is written down — tensor split, KV quant,
+   batch sizes, speculative settings — so parse it into chips. */
+async function pollRunning() {
+  const d = await swapFetch("/running", false);
+  S.running = (d.running || []).find(r => r.model === S.active) || (d.running || [])[0] || null;
+  S.cfg = S.running ? parseCmd(S.running.cmd || "") : null;
+}
+
+function parseCmd(cmd) {
+  const toks = cmd.replace(/\s+/g, " ").trim().split(" ");
+  const flags = {}, env = {};
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    const eq = t.indexOf("=");
+    if (!t.startsWith("--") && eq > 0 && /^[A-Z_][A-Z0-9_]*$/.test(t.slice(0, eq))) {
+      env[t.slice(0, eq)] = t.slice(eq + 1); continue;
+    }
+    if (!t.startsWith("--")) continue;
+    const name = t.slice(2);
+    const next = toks[i + 1];
+    if (next && !next.startsWith("--")) { flags[name] = next; i++; }
+    else flags[name] = true;
+  }
+  const devs = (env.CUDA_VISIBLE_DEVICES || "").split(",").filter(Boolean);
+  return { flags, env, gpus: devs.length, model: (flags.model || "").split("/").pop() || "" };
+}
+
+async function pollProps() {
+  const id = S.active;
+  if (!isLoaded(id) || S.props) return;
+  const props = await getMonitorJSON(id, "props");
+  if (!props) return;
+  if (id === S.active && isLoaded(id)) S.props = props;
+}
+
+async function pollSlots() {
+  const id = S.active;
+  if (!isLoaded(id)) return;
+  const slots = await getMonitorJSON(id, "slots");
+  if (slots === null) return;
+  if (id !== S.active || !isLoaded(id)) return;
+  S.slots = Array.isArray(slots) ? slots : [];
+  S.ok.llama = true;
+
+  let decoded = 0, task = "", processing = false, used = 0, nCtx = 0;
+  for (const s of S.slots) {
+    const nt = Array.isArray(s.next_token) ? s.next_token[0] : s.next_token;
+    decoded += (nt && isFinite(nt.n_decoded)) ? nt.n_decoded : 0;
+    task += String(s.id_task) + ":";
+    if (s.is_processing) processing = true;
+    used += s.n_prompt_tokens || 0;
+    nCtx = Math.max(nCtx, s.n_ctx || 0);
+  }
+  const t = now();
+
+  if (nCtx > 0) {
+    const last = S.ctxHist[S.ctxHist.length - 1];
+    if (!last || t - last.t > 1.0 || Math.abs(last.used - used) > 0) {
+      S.ctxHist.push({ t, used, pct: (used / nCtx) * 100, m: id });
+      trim(S.ctxHist, t);
+    }
+  }
+
+  const d = S.decode;
+  if (d.taskId !== task) { d.taskId = task; d.n = decoded; d.t = t; return; }
+  const dn = decoded - d.n, dt = t - d.t;
+  if (dt <= 0) return;
+
+  if (dn > 0) {
+    const inst = dn / dt;
+    d.ema = d.ema === null ? inst : d.ema * 0.55 + inst * 0.45;
+    pushLive(t, d.ema); d.n = decoded; d.t = t;
+  } else if (processing) {
+    // busy but no new tokens = still prefilling; keep the baseline fresh so the
+    // first decode sample isn't diluted by prefill time
+    d.n = decoded; d.t = t;
+  } else {
+    d.n = decoded; d.t = t;
+    const last = S.live[S.live.length - 1];
+    if (d.ema !== 0) { d.ema = 0; pushLive(t, 0); }
+    else if (!last || t - last.t > 2) pushLive(t, 0);
+  }
+}
+
+function pushLive(t, v) {
+  S.live.push({ t, v, m: S.active });
+  trim(S.live, t);
+}
+
+async function pollMetrics() {
+  const id = S.active;
+  if (!isLoaded(id)) return;
+  const raw = await getMonitorText(id, "metrics");
+  if (raw === null) return;
+  const m = parseProm(raw);
+  if (id !== S.active || !isLoaded(id)) return;
+  // Baselines are per model: llama.cpp's counters belong to the llama-server
+  // process, so switching away and back must diff against that model's own
+  // last reading, not whatever ran in between.
+  const prev = S.metricsBy[id] || null;
+  S.metricsBy[id] = m;
+  S.metrics = m;
+  S.ok.llama = true;
+  const t = now();
+
+  if (!prev) return;
+
+  const dOut  = (m["llamacpp:tokens_predicted_total"]         || 0) - (prev["llamacpp:tokens_predicted_total"]         || 0);
+  const dIn   = (m["llamacpp:prompt_tokens_total"]            || 0) - (prev["llamacpp:prompt_tokens_total"]            || 0);
+  const dGenS = (m["llamacpp:tokens_predicted_seconds_total"] || 0) - (prev["llamacpp:tokens_predicted_seconds_total"] || 0);
+  const dPpS  = (m["llamacpp:prompt_seconds_total"]           || 0) - (prev["llamacpp:prompt_seconds_total"]           || 0);
+  const dDec  = (m["llamacpp:n_decode_total"]                 || 0) - (prev["llamacpp:n_decode_total"]                 || 0);
+
+  // A model that was unloaded and reloaded comes back with its counters at
+  // zero. That reads as a large negative delta; re-baseline and skip rather
+  // than inventing a request out of the discontinuity.
+  if (dOut < 0 || dIn < 0 || dGenS < 0 || dPpS < 0 || dDec < 0) {
+    S.pending = null; S.pre = null;
+    logEvent(`<b>${id}</b> counters reset — reloaded`);
+    return;
+  }
+
+  // The prompt counters move the instant prefill finishes; the predicted counters
+  // only at end of generation. Publish the prefill half immediately so the tiles
+  // aren't blank for the whole of a long reply.
+  if (dIn > 0 || dPpS > 0) S.pre = { tokIn: dIn, ppSec: dPpS, pp: dPpS > 0 ? dIn / dPpS : null };
+
+  // The per-request charts still need both halves paired into one record.
+  if (dOut > 0) {
+    let tokIn = dIn, ppSec = dPpS;
+    if (S.pending) { tokIn += S.pending.tokIn; ppSec += S.pending.ppSec; S.pending = null; }
+    commitReq(tokIn, dOut, ppSec, dGenS, dDec);
+  } else if (dIn > 0) {
+    if (S.pending) { S.pending.tokIn += dIn; S.pending.ppSec += dPpS; }
+    else S.pending = { tokIn: dIn, ppSec: dPpS, at: Date.now() };
+  }
+  if (S.pending && Date.now() - S.pending.at > 20000) {
+    commitReq(S.pending.tokIn, 0, S.pending.ppSec, 0, 0);
+    S.pending = null;
+  }
+}
+
+function commitReq(tokIn, tokOut, ppSec, tgSec, nDecode) {
+  const tg = tgSec > 0 ? tokOut / tgSec : null;
+  // Accepted tokens per forward pass, measured over one request so both
+  // counters cover the same work. Sampling this on a timer instead produced
+  // isolated blips, and during a long prefill n_decode_total climbs on batch
+  // passes that predict nothing, which drags the ratio down for no reason.
+  const spec = (nDecode > 0 && tokOut > 0) ? tokOut / nDecode : null;
+  const model = S.active;
+  const r = {
+    i: ++S.reqSeq, time: new Date(), model, tokIn, tokOut, ppSec, tgSec,
+    pp: ppSec > 0 ? tokIn / ppSec : null,
+    tg,
+    itl: tg ? 1000 / tg : null,          // ms per output token
+    e2e: ppSec + tgSec,                  // prefill + decode wall time
+    spec,
+  };
+  S.reqs.push(r);
+  if (S.reqs.length > MAX_REQ) S.reqs.shift();
+
+  if (!model) return;
+  const b = rollup(model);
+  b.reqs++; b.tokIn += tokIn; b.tokOut += tokOut; b.lastSeen = Date.now();
+  keep(b.tg, tg); keep(b.pp, r.pp); keep(b.ttft, ppSec > 0 ? ppSec : null);
+  keep(b.itl, r.itl); keep(b.spec, spec);
+}
+
+/* ---------- host telemetry ----------
+   Two sources, in order of quality:
+   1. llama-host-agent on the inference box — samples /proc on its own 1 s
+      clock and serves differenced rates, plus page cache, disk throughput,
+      per-process RSS and CPU temperature.
+   2. llama-swap's /metrics — one snapshot rebuilt every ~5 s, CPU/RAM/swap/
+      load/net only. Correct, just coarse, and rates have to be inferred.
+   The agent is optional; absent it everything below still works. */
+function agentCandidates() {
+  const out = [];
+  const override = qs.get("agent") || localStorage.getItem("llamaLiveAgent");
+  if (override) out.push(normalizeHost(override));
+  if (location.protocol.startsWith("http")) out.push(location.origin);
+  out.push(withPort(HOST, "8082"));
+  return [...new Set(out)];
+}
+
+async function fetchAgentHost(base) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), 1500);
+  try {
+    const r = await fetch(base + "/host", { signal: c.signal, cache: "no-store" });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j && j.cpu && j.mem) ? j : null;
+  } catch { return null; }
+  finally { clearTimeout(t); }
+}
+
+/** Agent snapshot -> the shape the tiles and host panel already read. */
+function fromAgent(s) {
+  const cpu = s.cpu || {}, mem = s.mem || {}, sw = s.swap || {};
+  const net = s.net || {}, disk = s.disk || {}, load = s.load || [];
+  return {
+    src: "agent", t: now(),
+    cores: cpu.cores || [], cpu: cpu.pct, cpuMax: cpu.max, temp: cpu.temp,
+    memTotal: mem.total, memUsed: mem.used,
+    memPct: mem.total ? (mem.used / mem.total) * 100 : null,
+    cached: mem.cached, available: mem.available, dirty: mem.dirty,
+    swapTotal: sw.total, swapUsed: sw.used,
+    load1: load[0], load5: load[1], load15: load[2],
+    net: net.ifaces || {}, rx: net.rx, tx: net.tx, netAge: 0,
+    diskRead: disk.read, diskWrite: disk.write,
+    procs: s.procs || [], uptime: s.uptime,
+  };
+}
+
+async function pollHost() {
+  // Prefer the agent; re-probe for it periodically if it isn't up yet.
+  // Every path that produces a host reading must also push a rig sample —
+  // returning early from the agent branch left the load charts permanently
+  // empty once the agent existed.
+  if (S.agentBase) {
+    const snap = await fetchAgentHost(S.agentBase);
+    if (snap) { S.host = fromAgent(snap); S.ok.host = true; pushRig(S.host); return; }
+    S.agentBase = null;
+    logEvent("host agent went away — falling back to llama-swap");
+  } else if (Date.now() - S.agentProbedAt > 30000) {
+    S.agentProbedAt = Date.now();
+    for (const b of agentCandidates()) {
+      const snap = await fetchAgentHost(b);
+      if (snap) {
+        S.agentBase = b; S.host = fromAgent(snap); S.ok.host = true; pushRig(S.host);
+        logEvent(`host agent &rarr; <b>${b}</b>`);
+        return;
+      }
+    }
+  }
+
+  const raw = await swapFetch("/metrics", true);
+  const idx = parsePromLabeled(raw);
+  const cores = (idx["llamaswap_cpu_util_percent"] || [])
+    .slice().sort((a, b) => (+a.labels.core) - (+b.labels.core)).map(x => x.v);
+  const memTotal = promVal(idx, "llamaswap_memory_total_bytes");
+  const memUsed  = promVal(idx, "llamaswap_memory_used_bytes");
+  const net = {};
+  for (const s of idx["llamaswap_network_bytes_total"] || []) {
+    const i = s.labels.interface;
+    if (!i || i === "lo") continue;
+    (net[i] ||= { recv: 0, sent: 0 })[s.labels.direction] = s.v;
+  }
+  const t = now();
+  const h = {
+    src: "swap", t, cores,
+    cpu: cores.length ? cores.reduce((a, b) => a + b, 0) / cores.length : null,
+    cpuMax: cores.length ? Math.max(...cores) : null,
+    memTotal, memUsed,
+    memPct: memTotal ? (memUsed / memTotal) * 100 : null,
+    swapTotal: promVal(idx, "llamaswap_swap_total_bytes"),
+    swapUsed: promVal(idx, "llamaswap_swap_used_bytes"),
+    load1: promWhere(idx, "llamaswap_load_average", "interval", "1m"),
+    load5: promWhere(idx, "llamaswap_load_average", "interval", "5m"),
+    load15: promWhere(idx, "llamaswap_load_average", "interval", "15m"),
+    net, rx: null, tx: null,
+  };
+  // llama-swap rebuilds this whole snapshot on its own ~5 s cadence, so two
+  // polls 2 s apart usually return byte-identical counters. Dividing a zero
+  // delta by the poll interval reads as 0 B/s, and the poll that straddles a
+  // refresh then reports ~5 s of bytes over 2 s. Rate against the last sample
+  // whose counters actually moved, and hold the reading in between.
+  let rx = 0, tx = 0;
+  for (const k in net) { rx += net[k].recv || 0; tx += net[k].sent || 0; }
+  const mk = S.netMark;
+  if (!mk) {
+    S.netMark = { t, rx, tx, rateRx: null, rateTx: null };
+  } else if (rx !== mk.rx || tx !== mk.tx) {
+    const dt = t - mk.t;
+    if (dt > 0) {
+      mk.rateRx = Math.max(0, rx - mk.rx) / dt;
+      mk.rateTx = Math.max(0, tx - mk.tx) / dt;
+    }
+    mk.t = t; mk.rx = rx; mk.tx = tx;
+  }
+  if (S.netMark) {
+    // Counters frozen this long means the traffic really did stop, not that
+    // we are between refreshes.
+    const idle = t - S.netMark.t > 15;
+    h.rx = idle ? 0 : S.netMark.rateRx;
+    h.tx = idle ? 0 : S.netMark.rateTx;
+    h.netAge = t - S.netMark.t;
+  }
+  S.host = h;
+  S.ok.host = true;
+  pushRig(h);
+}
+
+/* One combined sample per host poll: GPU and host series must share a time
+   base to be readable stacked, and sampling here means CPU/RAM history still
+   exists when there is no GPU source at all. */
+function pushRig(h) {
+  const cards = S.gpu || [];
+  const t = now();
+  S.rigHist.push({
+    t,
+    cpu: isFinite(h.cpu) ? h.cpu : null,
+    ram: isFinite(h.memPct) ? h.memPct : null,
+    gu: cards.map(d => isFinite(d.util) ? d.util : 0),
+    gm: cards.map(d => d.memTotal ? (d.memUsed / d.memTotal) * 100 : 0),
+    power: cards.reduce((a, d) => a + (d.power || 0), 0),
+  });
+  trim(S.rigHist, t);
+}
+
+/* ---------- 24 h token history (agent only) ----------
+   Kept by the agent on the inference host, not here: a window maintained in
+   the browser would only cover the hours somebody had this page open. */
+async function pollHistory() {
+  if (!S.agentBase) return;
+  if (Date.now() - S.histAt < 30000) return;
+  S.histAt = Date.now();
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), 2500);
+  try {
+    const r = await fetch(S.agentBase + "/history?hours=24", { signal: c.signal, cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (j && j.models) { S.history = j; S.fleetAt = 0; }
+  } catch { /* optional */ }
+  finally { clearTimeout(t); }
+}
+
+/* ---------- GPU telemetry (optional, auto-discovered) ---------- */
+function normalizeGpu(payload, kind) {
+  // Shape 1 — nvidia-smi shim: {success:true, data:[{index,name,temperature,
+  //   utilization,memory_utilization,power_draw}]}  (proxy_v4.py)
+  // Shape 2 — a bare array or {gpus:[...]} of similar objects
+  // Shape 3 — Prometheus text from DCGM / nvidia_gpu_exporter
+  if (kind === "prom") {
+    const idx = parsePromLabeled(payload);
+    const byId = {};
+    const take = (name, field, scale = 1) => {
+      for (const s of idx[name] || []) {
+        const id = s.labels.gpu ?? s.labels.GPU_I_ID ?? s.labels.index ?? s.labels.uuid ?? "0";
+        (byId[id] ||= { index: id })[field] = s.v * scale;
+      }
+    };
+    take("DCGM_FI_DEV_GPU_UTIL", "util");
+    take("DCGM_FI_DEV_FB_USED", "memUsed", 1024 * 1024);
+    take("DCGM_FI_DEV_FB_FREE", "memFree", 1024 * 1024);
+    take("DCGM_FI_DEV_GPU_TEMP", "temp");
+    take("DCGM_FI_DEV_POWER_USAGE", "power");
+    take("DCGM_FI_DEV_SM_CLOCK", "clock");
+    take("nvidia_smi_utilization_gpu_ratio", "utilRatio");
+    take("nvidia_smi_memory_used_bytes", "memUsed");
+    take("nvidia_smi_memory_total_bytes", "memTotal");
+    take("nvidia_smi_temperature_gpu", "temp");
+    take("nvidia_smi_power_draw_watts", "power");
+    take("nvidia_smi_power_limit_watts", "powerLimit");
+    const list = Object.values(byId);
+    for (const g of list) {
+      if (g.utilRatio !== undefined && g.util === undefined) g.util = g.utilRatio * 100;
+      if (g.memTotal === undefined && g.memUsed !== undefined && g.memFree !== undefined) g.memTotal = g.memUsed + g.memFree;
+    }
+    return list.length ? list : null;
+  }
+  const arr = Array.isArray(payload) ? payload
+    : Array.isArray(payload && payload.data) ? payload.data
+    : Array.isArray(payload && payload.gpus) ? payload.gpus : null;
+  if (!arr) return null;
+  return arr.map((g, i) => {
+    const pick = (...k) => { for (const n of k) if (g[n] !== undefined && g[n] !== null) return g[n]; return undefined; };
+    const memUsed = pick("memory_used", "memUsed", "memory_used_bytes", "vram_used");
+    const memTotal = pick("memory_total", "memTotal", "memory_total_bytes", "vram_total");
+    return {
+      index: pick("index", "id") ?? i,
+      name: pick("name", "model", "product_name") || "GPU " + i,
+      util: pick("utilization", "utilization_gpu", "gpu_util", "util"),
+      memUtil: pick("memory_utilization", "mem_util"),
+      memUsed, memTotal,
+      temp: pick("temperature", "temperature_gpu", "temp"),
+      power: pick("power_draw", "power", "power_watts"),
+      powerLimit: pick("power_limit", "enforced_power_limit"),
+      clock: pick("clocks_sm", "sm_clock", "clock"),
+      fan: pick("fan_speed", "fan"),
+      pcieGen: pick("pcie_gen"), pcieWidth: pick("pcie_width"),
+      procs: g.processes || null,
+      throttle: pick("throttle_reasons", "throttle", "clocks_throttle_reasons"),
+    };
+  });
+}
+
+async function fetchGpuFrom(url) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), 1200);
+  try {
+    const r = await fetch(url, { signal: c.signal, cache: "no-store" });
+    if (!r.ok) return null;
+    const txt = await r.text();
+    if (/^\s*[[{]/.test(txt)) {
+      let j; try { j = JSON.parse(txt); } catch { return null; }
+      if (j && j.success === false) return null;
+      const list = normalizeGpu(j, "json");
+      return list && list.length ? { list, kind: "json" } : null;
+    }
+    const list = normalizeGpu(txt, "prom");
+    return list && list.length ? { list, kind: "prom" } : null;
+  } catch { return null; }
+  finally { clearTimeout(t); }
+}
+
+async function pollGpu() {
+  if (S.gpuUrl) {
+    const got = await fetchGpuFrom(S.gpuUrl);
+    if (got) {
+      S.gpu = got.list; S.ok.gpu = true;
+      // How much VRAM this model actually costs — the number that decides
+      // which of the fleet can run at all, and only knowable from the host.
+      if (S.active && S.slots.length) {
+        const held = got.list.reduce((a, d) => a + (d.memUsed || 0), 0);
+        if (held > 0) rollup(S.active).vram = held;
+      }
+      return;
+    }
+    // A source that stops answering is a source we should re-discover.
+    S.gpuUrl = null; S.gpu = null; S.ok.gpu = false;
+    logEvent("gpu telemetry source went away");
+  }
+  if (Date.now() - S.gpuProbedAt < GPU_PROBE) return;
+  S.gpuProbedAt = Date.now();
+  for (const url of gpuCandidates()) {
+    const got = await fetchGpuFrom(url);
+    if (got) {
+      S.gpuUrl = url; S.gpu = got.list; S.gpuKind = got.kind; S.ok.gpu = true;
+      logEvent(`gpu telemetry &rarr; <b>${url}</b>`);
+      return;
+    }
+  }
+  // Never-configured is not the same as broken: leave the indicator dark
+  // rather than red, so a red gpu dot always means "it was there and stopped".
+  S.ok.gpu = null;
+}
+
+/* ============================ loops ============================ */
+function loop(fn, interval, tag) {
+  (async function run() {
+    for (;;) {
+      if (!S.paused) {
+        try {
+          await fn();
+          S.lastOk = Date.now();
+          if (S.err) { S.err = null; logEvent("connection restored"); }
+        } catch (e) {
+          if (tag) S.ok[tag] = false;
+          // Only the primary llama-swap loop owns the global error banner;
+          // an optional source failing must not claim the server is down.
+          if (tag === "swap" || !tag) S.err = e.message || String(e);
+        }
+      }
+      await new Promise(r => setTimeout(r, interval));
+    }
+  })();
+}
+
+/* ============================ render ============================ */
+function render() {
+  const stale = Date.now() - S.lastOk;
+  const ok = S.lastOk && stale < 8000 && !S.err;
+  const busy = S.slots.some(s => s.is_processing);
+  const conn = $("connDot");
+  conn.className = "dot " + (ok ? (busy ? "live busy" : "live") : (S.lastOk ? "err" : "idle"));
+  conn.title = ok ? "connected" : (S.err || "connecting…");
+  $("clock").textContent = clockStr();
+  $("hostLabel").textContent = HOST.replace(/^https?:\/\//, "");
+  $("upLabel").textContent = S.loadedAt ? "loaded " + fmtDur((Date.now() - S.loadedAt) / 1000) + " ago" : "";
+
+  for (const [id, k] of [["srcSwap", "swap"], ["srcLlama", "llama"], ["srcHost", "host"], ["srcGpu", "gpu"]]) {
+    const v = S.ok[k];
+    $(id).className = "src " + (v === true ? "ok" : v === false ? "bad" : "off");
+  }
+
+  const eb = $("errBanner");
+  if (S.err) {
+    eb.hidden = false;
+    eb.innerHTML = `<b>Cannot reach ${HOST}</b> — ${S.err}. Check the server field above.`;
+  } else eb.hidden = true;
+
+  renderModel(busy);
+  renderTiles(busy);
+  renderLiveChart();
+  renderItlChart();
+  renderCtxChart();
+  renderSpecChart();
+  renderReqCharts();
+  render24h();
+  renderRigCharts();
+  renderHost();
+  renderFleet();
+}
+
+function renderModel(busy) {
+  const m = S.models.find(x => x.id === S.active);
+  const p = S.props, c = S.cfg;
+  $("mName").textContent = (m && m.name) || S.active || "No model loaded";
+  $("mId").textContent   = S.active || (S.models.length ? "llama-swap idle — all models unloaded" : "waiting for endpoint…");
+
+  // Launch configuration — the rig's real shape, straight off the child's argv.
+  const cfg = [];
+  if (c) {
+    const f = c.flags;
+    if (c.model) cfg.push(["gguf", c.model.replace(/\.gguf$/i, "")]);
+    if (f["ctx-size"]) cfg.push(["ctx", fmtBig(+f["ctx-size"])]);
+    if (c.gpus) cfg.push(["gpus", c.gpus]);
+    if (f["tensor-split"]) cfg.push(["split", f["tensor-split"]]);
+    if (f["gpu-layers"]) cfg.push(["ngl", f["gpu-layers"]]);
+    if (f["cache-type-k"] || f["cache-type-v"]) cfg.push(["kv quant", `${f["cache-type-k"] || "f16"}/${f["cache-type-v"] || "f16"}`]);
+    if (f["flash-attn"]) cfg.push(["flash-attn", f["flash-attn"] === true ? "on" : f["flash-attn"]]);
+    if (f["batch-size"]) cfg.push(["batch", f["batch-size"] + (f["ubatch-size"] ? "/" + f["ubatch-size"] : "")]);
+    if (f["parallel"]) cfg.push(["slots", f["parallel"]]);
+    if (f["threads"]) cfg.push(["threads", f["threads"] + (f["threads-batch"] ? "/" + f["threads-batch"] : "")]);
+    if (f["spec-type"]) cfg.push(["spec", f["spec-type"]]);
+    if (f["spec-draft-n-max"]) cfg.push(["draft n", f["spec-draft-n-max"]]);
+    if (f["cache-ram"]) cfg.push(["cache-ram", fmtBytes(+f["cache-ram"] * 1024 * 1024)]);
+    if (f["n-cpu-moe"] || f["cpu-moe"]) cfg.push(["cpu-moe", f["n-cpu-moe"] || "on"]);
+  }
+  if (p && p.build_info) cfg.push(["build", String(p.build_info).split(" ")[0]]);
+  $("cfgChips").innerHTML = cfg.length
+    ? cfg.map(([k, v]) => `<span class="chip hi">${k} <b>${v}</b></span>`).join("")
+    : `<span class="chip muted">no launch info</span>`;
+
+  const sd = $("stateDot"), st = $("stateText");
+  if (!S.active)   { sd.className = "dot idle"; st.textContent = "IDLE"; st.style.color = "var(--warn)"; }
+  else if (busy)   { sd.className = "dot live busy"; st.textContent = "GENERATING"; st.style.color = "var(--s1)"; }
+  else             { sd.className = "dot live"; st.textContent = "READY"; st.style.color = "var(--s2)"; }
+
+  const rt = [];
+  const s0 = S.slots[0];
+  const tidy = v => (typeof v === "number" ? parseFloat(v.toFixed(3)) : v);
+  if (s0) {
+    const pr = s0.params || {};
+    if (pr.temperature !== undefined) rt.push(["temp", tidy(pr.temperature)]);
+    if (pr.top_p !== undefined) rt.push(["top_p", tidy(pr.top_p)]);
+    if (pr.top_k !== undefined) rt.push(["top_k", tidy(pr.top_k)]);
+  }
+  if (p && p.model_ftype) rt.push(["quant", p.model_ftype]);
+  $("rtChips").innerHTML = rt.map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join("");
+}
+
+/* ---------- tile sparklines ----------
+   A two-minute trend behind each headline number. Sampled on its own clock,
+   not the render clock, and only redrawn when a sample lands — twelve of these
+   at 2.5 Hz would otherwise be pure churn. Auto-scaled to the buffer's own
+   range, so a flat series reads flat rather than as noise amplified to fill
+   the box. */
+const SPARK = {};
+function spark(key, v, color) {
+  const a = (SPARK[key] ||= { v: [], t: 0 });
+  if (v === null || v === undefined || !isFinite(v)) return;
+  if (Date.now() - a.t < 1500) return;
+  a.t = Date.now();
+  a.v.push(v);
+  if (a.v.length > 80) a.v.shift();
+
+  const svg = $("sp_" + key);
+  if (!svg || a.v.length < 3) return;
+  const W = 100, H = 30;
+  const mn = Math.min(...a.v), mx = Math.max(...a.v);
+  const span = (mx - mn) || Math.max(1e-6, Math.abs(mx) || 1);
+  const flat = (mx - mn) < 1e-9;
+  const X = i => (i / (a.v.length - 1)) * W;
+  const Y = val => flat ? H * 0.55 : H - ((val - mn) / span) * (H - 4) - 2;
+  let d = "";
+  a.v.forEach((val, i) => { d += (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(val).toFixed(1) + " "; });
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML =
+    `<defs><linearGradient id="sg_${key}" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0%" stop-color="${color}" stop-opacity=".7"/>` +
+    `<stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>` +
+    `<path d="${d}L${W} ${H} L0 ${H} Z" fill="url(#sg_${key})"/>` +
+    `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.3" ` +
+    `vector-effect="non-scaling-stroke" opacity=".95" stroke-linejoin="round"/>`;
+}
+
+function renderTiles(busy) {
+  const m = S.metrics || {}, s0 = S.slots[0], h = S.host;
+
+  const live = S.decode.ema === null ? 0 : S.decode.ema;
+  $("tgLive").innerHTML = fmt(live, 1) + `<span class="u">tok/s</span>`;
+  const lastTg = m["llamacpp:predicted_tokens_seconds"];
+  spark("tgLive", live, "var(--s1)");
+  $("tgLiveFoot").textContent = busy ? "generating now"
+    : (lastTg ? `idle · last req ${fmt(lastTg, 1)} tok/s` : "idle");
+
+  const gauge = m["llamacpp:prompt_tokens_seconds"];
+  const P = S.pre;
+  const ppVal = (P && P.pp) ? P.pp : (gauge || null);
+  $("ppLast").innerHTML = (ppVal ? fmt(ppVal, 0) : "—") + `<span class="u">tok/s</span>`;
+  $("ppLastFoot").textContent = P
+    ? `${fmtInt(P.tokIn)} prompt tok` + (gauge ? ` · server ${fmt(gauge, 0)}` : "")
+    : (gauge ? "server-reported last request" : "prompt processing");
+
+  spark("ppLast", ppVal, "var(--s2)");
+  $("ttft").innerHTML = (P && P.ppSec > 0 ? fmt(P.ppSec, 2) : "—") + `<span class="u">s</span>`;
+  $("ttftFoot").textContent = P && P.ppSec > 0 ? `prefill of ${fmtInt(P.tokIn)} tok` : "prefill wall time";
+
+spark("ttft", P && P.ppSec > 0 ? P.ppSec : null, "var(--s3)");
+  // Inter-token latency: the number that decides whether streaming feels smooth.
+  // Live while generating, last completed request otherwise.
+  const itlNow = live > 0.05 ? 1000 / live : null;
+  const lastReq = S.reqs[S.reqs.length - 1];
+  const itlShow = itlNow ?? (lastReq && lastReq.itl) ?? null;
+  $("itl").innerHTML = (itlShow === null ? "—" : fmt(itlShow, 1)) + `<span class="u">ms/tok</span>`;
+  $("itlFoot").textContent = itlNow ? "live · lower is smoother"
+    : (lastReq && lastReq.itl ? `last req · ${fmt(lastReq.tg, 1)} tok/s` : "what streaming feels like");
+
+spark("itl", itlShow, "var(--s3)");
+  const nCtx = s0 ? s0.n_ctx : (S.props && S.props.default_generation_settings && S.props.default_generation_settings.n_ctx);
+  const used = s0 ? (s0.n_prompt_tokens || 0) : 0;
+  const cp = nCtx ? (used / nCtx) * 100 : null;
+  $("ctxPct").innerHTML = (cp === null ? "—" : fmt(cp, 1)) + `<span class="u">%</span>`;
+  $("ctxBar").style.width = (cp === null ? 0 : Math.min(100, cp)) + "%";
+  $("ctxFoot").textContent = nCtx ? `${fmtInt(used)} / ${fmtBig(nCtx)} tok` : "— / — tokens";
+
+spark("ctxPct", cp, "var(--s4)");
+  // VRAM across every card. This is the constraint that decides which of the
+  // fleet will load at all, so it earns a tile rather than a buried meter.
+  const cards = S.gpu || [];
+  const vTot = cards.reduce((a, d) => a + (d.memTotal || 0), 0);
+  const vUsed = cards.reduce((a, d) => a + (d.memUsed || 0), 0);
+  const vp = vTot ? (vUsed / vTot) * 100 : null;
+  $("vramPct").innerHTML = (vp === null ? "—" : fmt(vp, 1)) + `<span class="u">%</span>`;
+  $("vramBar").style.width = (vp === null ? 0 : Math.min(100, vp)) + "%";
+  $("vramFoot").textContent = vTot
+    ? `${fmtBytes(vUsed)} / ${fmtBytes(vTot)}` + (cards.length > 1 ? ` · ${cards.length} cards` : "")
+    : "no GPU source";
+
+spark("vramPct", vp, "var(--s4)");
+  let hit = null;
+  if (s0 && s0.n_prompt_tokens > 0) hit = ((s0.n_prompt_tokens_cache || 0) / s0.n_prompt_tokens) * 100;
+  $("cacheHit").innerHTML = (hit === null ? "—" : fmt(hit, 1)) + `<span class="u">%</span>`;
+  $("cacheBar").style.width = (hit === null ? 0 : Math.min(100, hit)) + "%";
+  $("cacheFoot").textContent = s0
+    ? `${fmtInt(s0.n_prompt_tokens_cache || 0)} of ${fmtInt(s0.n_prompt_tokens || 0)} reused`
+    : "reused prompt tokens";
+
+spark("cacheHit", hit, "var(--s5)");
+  const spec = specNow();
+  $("specTile").innerHTML = spec === null ? "—" : fmt(spec, 2);
+  $("specFoot").textContent = spec === null ? "draft acceptance"
+    : spec > 1.02 ? `${fmt((spec - 1) * 100, 0)}% from drafts` : "speculation idle";
+
+spark("specTile", spec, "var(--s5)");
+  // Draw against the cards' own limits: 60 W means nothing without knowing
+  // whether the ceiling is 280 or 315.
+  const wNow = cards.reduce((a, d) => a + (d.power || 0), 0);
+  const wMax = cards.reduce((a, d) => a + (d.powerLimit || 0), 0);
+  $("gpuW").innerHTML = (cards.length ? fmt(wNow, 0) : "—") + `<span class="u">W</span>`;
+  $("gpuWBar").style.width = (wMax ? Math.min(100, (wNow / wMax) * 100) : 0) + "%";
+  $("gpuWFoot").textContent = wMax ? `of ${fmt(wMax, 0)} W limit`
+    : (cards.length ? "no limit reported" : "no GPU source");
+
+spark("gpuW", cards.length ? wNow : null, "var(--s1)");
+  // How deep into the window this model has actually been driven — the fleet
+  // configures up to 262k, but what got exercised is a different question.
+  const peak = m["llamacpp:n_tokens_max"];
+  $("peakCtx").innerHTML = (peak === undefined ? "—" : fmtBig(peak)) + `<span class="u">tok</span>`;
+  $("peakCtxFoot").textContent = (peak !== undefined && nCtx)
+    ? `${fmt((peak / nCtx) * 100, 1)}% of ${fmtBig(nCtx)} window` : "deepest prompt seen";
+
+spark("peakCtx", peak, "var(--s2)");
+  const tout = m["llamacpp:tokens_predicted_total"];
+  $("sessOut").innerHTML = tout === undefined ? "—" : fmtBig(tout);
+  $("sessOutFoot").textContent = tout === undefined ? "tokens generated"
+    : `${fmtBig(m["llamacpp:prompt_tokens_total"] || 0)} prompt tok in`;
+
+spark("sessOut", tout, "var(--s4)");
+    $("ramTile").innerHTML = (h && h.memPct !== null ? fmt(h.memPct, 1) : "—") + `<span class="u">%</span>`;
+  $("ramTileBar").style.width = (h && h.memPct ? Math.min(100, h.memPct) : 0) + "%";
+  $("ramTileFoot").textContent = h && h.memTotal
+    ? `${fmtBytes(h.memUsed)} / ${fmtBytes(h.memTotal)}` + (h.swapUsed > 0 ? ` · swap ${fmtBytes(h.swapUsed)}` : "")
+    : "system RAM";
+  spark("ramTile", h ? h.memPct : null, "var(--s5)");
+}
+
+/** Accepted tokens per forward pass over the last few requests of the active
+    model; null until at least one has completed. */
+function specNow() {
+  const mine = S.reqs.filter(r => r.model === S.active && r.spec !== null);
+  if (!mine.length) return null;
+  const tail = mine.slice(-5);
+  return tail.reduce((a, b) => a + b.spec, 0) / tail.length;
+}
+
+/* ---------- chart primitives ---------- */
+function niceMax(v) {
+  if (!isFinite(v) || v <= 0) return 10;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / mag;
+  // Finer than 1/2/5 so a 25s series doesn't get a 50s axis, but every step
+  // still divides by 4 into a round tick (the frame draws 4 gridlines).
+  for (const s of [1, 1.2, 1.6, 2, 2.4, 3.2, 4, 5, 6, 8, 10]) if (n <= s) return s * mag;
+  return 10 * mag;
+}
+const svgNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs) {
+  const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+const TEXT_HALO = { "paint-order": "stroke", stroke: "#05050a", "stroke-width": 3.5, "stroke-linejoin": "round" };
+function label(attrs, text) {
+  const e = el("text", Object.assign({}, TEXT_HALO, attrs));
+  e.textContent = text;
+  return e;
+}
+/* An idle chart should look deliberately at rest, not broken: a dashed
+   baseline gives the plot a floor to sit on, and the caption says how long it
+   has been quiet rather than just asserting emptiness. */
+function emptyNote(svg, W, H, msg) {
+  const y = H * 0.62;
+  svg.appendChild(el("line", { x1: 46, x2: W - 12, y1: y, y2: y,
+    stroke: "var(--border-hi)", "stroke-width": 1, "stroke-dasharray": "3 5",
+    opacity: .7, "vector-effect": "non-scaling-stroke" }));
+  const t = el("text", { x: W / 2, y: y - 10, "text-anchor": "middle",
+    fill: "var(--text-muted)", "font-size": 12.1, "font-family": "var(--mono)" });
+  t.textContent = msg;
+  svg.appendChild(t);
+  const last = S.reqs[S.reqs.length - 1];
+  if (last) {
+    const mins = (Date.now() - last.time.getTime()) / 60000;
+    const s = el("text", { x: W / 2, y: y + 15, "text-anchor": "middle",
+      fill: "var(--border-hi)", "font-size": 10.3, "font-family": "var(--mono)" });
+    s.textContent = mins < 1 ? "last request moments ago"
+      : `last request ${mins < 60 ? Math.round(mins) + "m" : (mins / 60).toFixed(1) + "h"} ago`;
+    svg.appendChild(s);
+  }
+}
+
+/** Panels are sized by the deck, not the other way round: each chart measures
+    the box it was given and draws into a viewBox of exactly that many CSS
+    pixels, so text keeps its real size at every panel height. */
+function sizeSvg(svg) {
+  const r = svg.getBoundingClientRect();
+  const W = Math.max(160, Math.round(r.width));
+  const H = Math.max(56, Math.round(r.height));
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  return [W, H];
+}
+
+/** Axis frame shared by every chart. Returns plot geometry. */
+function frame(svg, W, H, maxY, yLabel, xLabels, fmtTick) {
+  svg.innerHTML = "";
+  const tight = H < 150;
+  // Gutters track the tick font: at 10.3px the old 42px left margin clipped
+  // five-digit values and the baseline labels collided with the axis.
+  const L = 50, R = 12, T = tight ? 21 : 25, B = tight ? 19 : 22;
+  const pw = W - L - R, ph = H - T - B;
+  const ticks = tight ? 2 : 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = (maxY / ticks) * i;
+    const y = T + ph - (v / maxY) * ph;
+    svg.appendChild(el("line", { x1: L, x2: W - R, y1: y, y2: y,
+      stroke: "var(--grid)", "stroke-width": 1, "vector-effect": "non-scaling-stroke" }));
+    const t = el("text", { x: L - 7, y: y + 3.6, "text-anchor": "end",
+      fill: "var(--text-muted)", "font-size": 10.3, "font-family": "var(--mono)" });
+    t.textContent = fmtTick ? fmtTick(v) : (v >= 1000 ? fmtBig(v) : (maxY <= 20 ? v.toFixed(1) : Math.round(v)));
+    svg.appendChild(t);
+  }
+  const yl = el("text", { x: 0, y: 10, "text-anchor": "start",
+    fill: "var(--text-muted)", "font-size": 9.8, "font-family": "var(--mono)", "letter-spacing": "0.6" });
+  yl.textContent = yLabel;
+  svg.appendChild(yl);
+  (xLabels || []).forEach(({ x, label: lb }) => {
+    const t = el("text", { x: L + x * pw, y: H - 5, "text-anchor": "middle",
+      fill: "var(--text-muted)", "font-size": 10.3, "font-family": "var(--mono)" });
+    t.textContent = lb;
+    svg.appendChild(t);
+  });
+  return { L, R, T, B, pw, ph, W, H };
+}
+
+function hoverLayer(svg, tip, g, n, xOf, yOf, build) {
+  const hit = el("rect", { x: g.L, y: g.T, width: g.pw, height: g.ph, fill: "transparent" });
+  svg.appendChild(hit);
+  const box = svg.parentElement;
+  hit.addEventListener("pointermove", ev => {
+    const r = svg.getBoundingClientRect();
+    const sx = ((ev.clientX - r.left) / r.width) * g.W;
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < n; i++) { const d = Math.abs(xOf(i) - sx); if (d < bd) { bd = d; bi = i; } }
+    tip.innerHTML = build(bi);
+    tip.style.left = Math.min(Math.max((xOf(bi) / g.W) * r.width + 12, 4), box.clientWidth - tip.offsetWidth - 4) + "px";
+    tip.style.top = Math.max((yOf(bi) / g.H) * r.height - 10, 2) + "px";
+    tip.style.opacity = 1;
+  });
+  hit.addEventListener("pointerleave", () => { tip.style.opacity = 0; });
+}
+
+const timeLabels = n => Array.from({ length: n + 1 }, (_, i) => i / n)
+  .map(f => ({ x: f, label: f === 1 ? "now" : `-${Math.round(LIVE_WINDOW * (1 - f))}s` }));
+
+/** Rules where llama-swap changed models. The series stays one hue — it is
+    still one measure — and the model becomes an annotation on the timeline
+    rather than a second encoding competing with the data. */
+function drawSwitches(svg, g, tNow, withLabel) {
+  const t0 = tNow - LIVE_WINDOW;
+  for (const s of S.switches) {
+    if (s.t < t0 || !s.to) continue;
+    const x = g.L + ((s.t - t0) / LIVE_WINDOW) * g.pw;
+    if (x < g.L - 1 || x > g.L + g.pw + 1) continue;
+    svg.appendChild(el("line", { x1: x, x2: x, y1: g.T, y2: g.T + g.ph,
+      stroke: "var(--s3)", "stroke-width": 1, "stroke-dasharray": "2 3",
+      opacity: .55, "vector-effect": "non-scaling-stroke" }));
+    if (withLabel) {
+      svg.appendChild(label({ x: Math.min(x + 3, g.L + g.pw - 4), y: g.T + 8,
+        "text-anchor": x > g.L + g.pw - 60 ? "end" : "start",
+        fill: "var(--s3)", "font-size": 9.2, "font-family": "var(--mono)" }, shortModel(s.to)));
+    }
+  }
+}
+
+/** Shared time-series area renderer for the single-measure live charts. */
+function drawSeries(svg, tip, pts, opt) {
+  const [W, H] = sizeSvg(svg);
+  const key = opt.key;
+  const maxV = niceMax(Math.max(opt.floor, ...pts.map(p => p[key])) * 1.15);
+  const tNow = now();
+  const g = frame(svg, W, H, maxV, opt.yLabel, timeLabels(H < 150 ? 2 : 4), opt.fmtTick);
+  if (!pts.length) {
+    emptyNote(svg, W, H, S.active ? opt.empty : "no model loaded");
+    return null;
+  }
+  const X = p => g.L + ((p.t - (tNow - LIVE_WINDOW)) / LIVE_WINDOW) * g.pw;
+  const Y = v => g.T + g.ph - (Math.min(v, maxV) / maxV) * g.ph;
+
+  let d = "";
+  pts.forEach((p, i) => { d += (i ? "L" : "M") + X(p).toFixed(1) + " " + Y(p[key]).toFixed(1) + " "; });
+
+  const gid = opt.id + "Grad";
+  const defs = el("defs", {});
+  const lg = el("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
+  lg.appendChild(el("stop", { offset: "0%",   "stop-color": opt.color, "stop-opacity": .34 }));
+  lg.appendChild(el("stop", { offset: "100%", "stop-color": opt.color, "stop-opacity": 0 }));
+  defs.appendChild(lg); svg.appendChild(defs);
+
+  svg.appendChild(el("path", {
+    d: d + `L${X(pts[pts.length - 1]).toFixed(1)} ${g.T + g.ph} L${X(pts[0]).toFixed(1)} ${g.T + g.ph} Z`,
+    fill: `url(#${gid})` }));
+  svg.appendChild(el("path", { d, fill: "none", stroke: opt.color, "stroke-width": 2,
+    "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
+    style: `filter: drop-shadow(0 0 5px ${opt.glow || opt.color})` }));
+
+  drawSwitches(svg, g, tNow, opt.switchLabels);
+
+  const last = pts[pts.length - 1];
+  svg.appendChild(el("circle", { cx: X(last), cy: Y(last[key]), r: 3.5, fill: opt.color,
+    style: `filter: drop-shadow(0 0 6px ${opt.color})` }));
+  svg.appendChild(label({ x: Math.min(X(last) + 8, W - 46), y: Math.max(Y(last[key]) - 8, g.T + 10),
+    fill: opt.color, "font-size": 12.6, "font-weight": 700, "font-family": "var(--mono)" },
+    opt.labelOf ? opt.labelOf(last) : fmt(last[key], opt.dec ?? 1)));
+
+  hoverLayer(svg, tip, g, pts.length, i => X(pts[i]), i => Y(pts[i][key]), i => {
+    const p = pts[i];
+    return `<div class="tt">t−${Math.max(0, Math.round(tNow - p.t))}s${p.m && p.m !== S.active ? " · " + p.m : ""}</div>` +
+      `<div class="tr"><i style="background:${opt.color}"></i>${opt.tipLabel}<b>${opt.tipOf ? opt.tipOf(p) : fmt(p[key], opt.dec ?? 1)}</b></div>`;
+  });
+  return { g, X, Y, maxV, tNow };
+}
+
+/* ---------- hero: live throughput ---------- */
+function renderLiveChart() {
+  const svg = $("liveChart");
+  const pts = S.live;
+  const r = drawSeries(svg, $("liveTip"), pts, {
+    id: "live", key: "v", color: "var(--s1)", glow: "rgba(34,211,238,.85)",
+    yLabel: "tok/s", floor: 10, dec: 1, tipLabel: "generation", switchLabels: true,
+    empty: "waiting for generation activity…",
+    tipOf: p => fmt(p.v, 1) + " tok/s",
+  });
+  if (!r) { $("liveWindowBadge").textContent = `last ${LIVE_WINDOW} s`; return; }
+  const peak = pts.reduce((a, b) => (b.v > a.v ? b : a), pts[0]);
+  const last = pts[pts.length - 1];
+  if (peak.v > 0 && peak !== last) {
+    svg.appendChild(label({ x: Math.min(Math.max(r.X(peak), r.g.L + 18), r.g.W - 44), y: Math.max(r.Y(peak.v) - 8, r.g.T + 10),
+      "text-anchor": "middle", fill: "var(--text-secondary)", "font-size": 10.3,
+      "font-family": "var(--mono)" }, "peak " + fmt(peak.v, 1)));
+  }
+  $("liveWindowBadge").textContent = `${LIVE_WINDOW}s · peak ${fmt(peak.v, 1)}`;
+}
+
+/* ---------- inter-token latency ---------- */
+function renderItlChart() {
+  // Derived from the same decode samples as the hero chart, inverted. Idle
+  // samples carry no latency at all, so they are dropped rather than plotted
+  // as zero — a flat 0 ms/token would read as "infinitely fast".
+  const pts = S.live.filter(p => p.v > 0.05).map(p => ({ t: p.t, ms: 1000 / p.v }));
+  const r = drawSeries($("itlChart"), $("itlTip"), pts, {
+    id: "itl", key: "ms", color: "var(--s3)", glow: "rgba(167,139,250,.8)",
+    yLabel: "ms / token", floor: 20, dec: 1, tipLabel: "per token",
+    empty: "waiting for generation activity…",
+    tipOf: p => fmt(p.ms, 1) + " ms",
+  });
+  if (!r) { $("itlBadge").textContent = "—"; return; }
+  const vals = pts.map(p => p.ms).sort((a, b) => a - b);
+  $("itlBadge").textContent = `med ${fmt(pct(vals, 50), 1)} ms · p95 ${fmt(pct(vals, 95), 1)}`;
+}
+
+/* ---------- context window fill ---------- */
+function renderCtxChart() {
+  const s0 = S.slots[0];
+  const nCtx = s0 ? s0.n_ctx : 0;
+  const r = drawSeries($("ctxChart"), $("ctxTip"), S.ctxHist, {
+    id: "ctx", key: "pct", color: "var(--s4)", glow: "rgba(251,191,36,.8)",
+    yLabel: "% of ctx", floor: 2, dec: 1, tipLabel: "context",
+    empty: "waiting for slot activity…",
+    fmtTick: v => fmt(v, v < 10 ? 1 : 0) + "%",
+    labelOf: p => fmtInt(p.used) + " tok",
+    tipOf: p => `${fmtInt(p.used)} tok · ${fmt(p.pct, 2)}%`,
+  });
+  const last = S.ctxHist[S.ctxHist.length - 1];
+  $("ctxBadge").textContent = (r && nCtx && last)
+    ? `${fmtInt(last.used)} / ${fmtBig(nCtx)} · ${fmt(last.pct, 1)}%` : "—";
+}
+
+
+/* ---------- speculative decode ---------- */
+function renderSpecChart() {
+  const svg = $("specChart"), tip = $("specTip");
+  const [W, H] = sizeSvg(svg);
+  // One point per completed request, connected — the old per-poll sampling
+  // only produced a sample when a generation happened to straddle two polls,
+  // which read as scattered blips on an otherwise empty chart.
+  const pts = S.reqs.filter(r => r.spec !== null && isFinite(r.spec));
+  const maxV = niceMax(Math.max(1.6, ...pts.map(p => p.spec)) * 1.1);
+  const xLabels = pts.length > 1
+    ? [{ x: 0, label: "#" + pts[0].i }, { x: 1, label: "#" + pts[pts.length - 1].i }] : [];
+  const g = frame(svg, W, H, maxV, "tok / forward pass", xLabels, v => fmt(v, 2));
+
+  if (!pts.length) {
+    emptyNote(svg, W, H, S.active ? "no completed generations yet" : "no model loaded");
+    $("specBadge").textContent = "—";
+    return;
+  }
+  const X = i => g.L + (pts.length === 1 ? g.pw / 2 : (i / (pts.length - 1)) * g.pw);
+  const Y = v => g.T + g.ph - (Math.min(v, maxV) / maxV) * g.ph;
+
+  // The 1.0 line is the meaning of this chart: at or below it, drafting costs
+  // more than it returns.
+  const y1 = Y(1);
+  svg.appendChild(el("line", { x1: g.L, x2: W - g.R, y1, y2: y1,
+    stroke: "var(--text-muted)", "stroke-width": 1, "stroke-dasharray": "3 4",
+    opacity: .55, "vector-effect": "non-scaling-stroke" }));
+  svg.appendChild(label({ x: g.L + 3, y: y1 - 4, fill: "var(--text-muted)",
+    "font-size": 9.8, "font-family": "var(--mono)" }, "1.00 = no gain"));
+
+  const defs = el("defs", {});
+  const lg = el("linearGradient", { id: "specGrad", x1: 0, y1: 0, x2: 0, y2: 1 });
+  lg.appendChild(el("stop", { offset: "0%",   "stop-color": "var(--s5)", "stop-opacity": .34 }));
+  lg.appendChild(el("stop", { offset: "100%", "stop-color": "var(--s5)", "stop-opacity": 0 }));
+  defs.appendChild(lg); svg.appendChild(defs);
+
+  let d = "";
+  pts.forEach((p, i) => { d += (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p.spec).toFixed(1) + " "; });
+  svg.appendChild(el("path", {
+    d: d + `L${X(pts.length - 1).toFixed(1)} ${g.T + g.ph} L${X(0).toFixed(1)} ${g.T + g.ph} Z`,
+    fill: "url(#specGrad)" }));
+  svg.appendChild(el("path", { d, fill: "none", stroke: "var(--s5)", "stroke-width": 2,
+    "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
+    style: "filter: drop-shadow(0 0 5px rgba(255,77,157,.85))" }));
+  if (pts.length <= 40) pts.forEach((p, i) => {
+    svg.appendChild(el("circle", { cx: X(i), cy: Y(p.spec), r: 3, fill: "var(--s5)",
+      stroke: "#05050a", "stroke-width": 2 }));
+  });
+
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].model === pts[i - 1].model) continue;
+    const x = (X(i) + X(i - 1)) / 2;
+    svg.appendChild(el("line", { x1: x, x2: x, y1: g.T, y2: g.T + g.ph,
+      stroke: "var(--s3)", "stroke-width": 1, "stroke-dasharray": "2 3",
+      opacity: .55, "vector-effect": "non-scaling-stroke" }));
+  }
+
+  const li = pts.length - 1;
+  svg.appendChild(label({ x: li > 0 ? X(li) - 6 : X(li) + 6, y: Math.max(Y(pts[li].spec) - 7, g.T + 10),
+    "text-anchor": li > 0 ? "end" : "start", fill: "var(--s5)",
+    "font-size": 12.6, "font-weight": 700, "font-family": "var(--mono)" }, fmt(pts[li].spec, 2)));
+
+  const mine = pts.filter(p => !S.active || p.model === S.active);
+  const use = mine.length ? mine : pts;
+  const mean = use.reduce((a, b) => a + b.spec, 0) / use.length;
+  const b = $("specBadge");
+  b.textContent = `${shortModel(S.active)} mean ${fmt(mean, 2)}`;
+  b.className = "badge" + (mean > 1.3 ? " on" : mean < 1.02 ? " warn" : "");
+
+  hoverLayer(svg, tip, g, pts.length, i => X(i), i => Y(pts[i].spec), i => {
+    const p = pts[i];
+    return `<div class="tt">req #${p.i} · ${clockStr(p.time)}${p.model ? " · " + p.model : ""}</div>` +
+      `<div class="tr"><i style="background:var(--s5)"></i>tok / pass<b>${fmt(p.spec, 3)}</b></div>` +
+      `<div class="tr"><i style="background:transparent"></i>from drafts<b>${fmt(Math.max(0, p.spec - 1) * 100, 0)}%</b></div>` +
+      `<div class="tr"><i style="background:transparent"></i>tokens out<b>${fmtInt(p.tokOut)}</b></div>`;
+  });
+}
+
+
+/* ---------- per-request small multiples ---------- */
+function renderReqCharts() {
+  const mineN = S.reqs.filter(r => r.model === S.active).length;
+  $("reqCountBadge").textContent = mineN === S.reqs.length
+    ? `${S.reqSeq} req` : `${mineN} of ${S.reqs.length} shown · ${S.reqSeq} total`;
+  if (!$("reqCharts").hidden) {
+    drawReq($("ppChart"),   $("ppTip"),   "pp",     "var(--s2)", "prefill tok/s", { dec: 0 });
+    drawReq($("tgChart"),   $("tgTip"),   "tg",     "var(--s1)", "decode tok/s",  { dec: 1 });
+    drawReq($("ttftChart"), $("ttftTip"), "ppSec",  "var(--s3)", "ttft (s)",      { dec: 2, unit: "s" });
+    drawReq($("outChart"),  $("outTip"),  "tokOut", "var(--s4)", "tokens out",    { dec: 0, bars: true });
+  }
+  renderReqTable();
+}
+
+function drawReq(svg, tip, key, color, yLabel, opt) {
+  const [W, H] = sizeSvg(svg);
+  const o = opt || {};
+  const pts = S.reqs.filter(r => r[key] !== null && isFinite(r[key]));
+  const maxV = niceMax(Math.max(o.dec === 2 ? 0.1 : 1, ...pts.map(p => p[key])) * 1.18);
+  const xLabels = pts.length > 1
+    ? [{ x: 0, label: "#" + pts[0].i }, { x: 1, label: "#" + pts[pts.length - 1].i }] : [];
+  // seconds axis: drop the decimals once the range is large enough not to need them
+  const g = frame(svg, W, H, maxV, yLabel, xLabels,
+    o.dec === 2 ? (v => fmt(v, maxV >= 10 ? 0 : maxV >= 2 ? 1 : 2)) : undefined);
+
+  if (!pts.length) { emptyNote(svg, W, H, "no completed requests yet"); return; }
+
+  const X = i => g.L + (pts.length === 1 ? g.pw / 2 : (i / (pts.length - 1)) * g.pw);
+  const Y = v => g.T + g.ph - (v / maxV) * g.ph;
+  const fv = v => fmt(v, o.dec);
+
+  if (o.bars) {
+    // 4px rounded data-ends anchored to the baseline, 2px gap between bars
+    const slot = g.pw / Math.max(pts.length, 1);
+    const bw = Math.max(2, Math.min(20, slot - 2));
+    pts.forEach((p, i) => {
+      const cx = pts.length === 1 ? g.L + g.pw / 2 : g.L + slot * (i + 0.5);
+      const y = Y(p[key]), h = Math.max(2, g.T + g.ph - y);
+      svg.appendChild(el("rect", { x: cx - bw / 2, y, width: bw, height: h,
+        rx: Math.min(4, bw / 2), fill: color, opacity: .92 }));
+    });
+  } else {
+    let d = "";
+    pts.forEach((p, i) => { d += (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p[key]).toFixed(1) + " "; });
+    svg.appendChild(el("path", { d, fill: "none", stroke: color, "stroke-width": 2,
+      "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
+      style: `filter: drop-shadow(0 0 4px ${color})` }));
+    if (pts.length <= 40) pts.forEach((p, i) => {
+      svg.appendChild(el("circle", { cx: X(i), cy: Y(p[key]), r: 3, fill: color,
+        stroke: "#05050a", "stroke-width": 2 }));
+    });
+  }
+
+  // Model boundaries. These charts are indexed by request, not time, so the
+  // rule goes between the two requests that straddle the swap.
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].model === pts[i - 1].model) continue;
+    const xa = o.bars ? g.L + (g.pw / pts.length) * (i + 0.5) : X(i);
+    const xb = o.bars ? g.L + (g.pw / pts.length) * (i - 0.5) : X(i - 1);
+    const x = (xa + xb) / 2;
+    svg.appendChild(el("line", { x1: x, x2: x, y1: g.T, y2: g.T + g.ph,
+      stroke: "var(--s3)", "stroke-width": 1, "stroke-dasharray": "2 3",
+      opacity: .55, "vector-effect": "non-scaling-stroke" }));
+  }
+
+  // Median over the ACTIVE model only: a median across a 27B and a 9B is a
+  // reference line neither of them would ever sit near.
+  const scoped = pts.filter(p => !S.active || p.model === S.active);
+  const sorted = (scoped.length ? scoped : pts).map(p => p[key]).slice().sort((a, b) => a - b);
+  const med = pct(sorted, 50);
+  svg.appendChild(el("line", { x1: g.L, x2: W - g.R, y1: Y(med), y2: Y(med),
+    stroke: "var(--text-muted)", "stroke-width": 1, "stroke-dasharray": "3 4",
+    opacity: .5, "vector-effect": "non-scaling-stroke" }));
+  svg.appendChild(label({ x: g.L + 3, y: Y(med) - 4, fill: "var(--text-muted)",
+    "font-size": 9.8, "font-family": "var(--mono)" }, "med " + fv(med)));
+
+  const li = pts.length - 1, lv = pts[li][key];
+  const lx = o.bars ? g.L + (g.pw / pts.length) * (li + 0.5) : X(li);
+  svg.appendChild(label({ x: lx > W - 56 ? lx - 6 : lx + 6, y: Math.max(Y(lv) - 6, g.T + 10),
+    "text-anchor": lx > W - 56 ? "end" : "start", fill: color,
+    "font-size": 12.1, "font-weight": 700, "font-family": "var(--mono)" }, fv(lv)));
+
+  hoverLayer(svg, tip, g,
+    pts.length,
+    i => (o.bars ? g.L + (g.pw / pts.length) * (i + 0.5) : X(i)),
+    i => Y(pts[i][key]),
+    i => {
+      const p = pts[i];
+      return `<div class="tt">req #${p.i} · ${clockStr(p.time)}${p.model ? " · " + p.model : ""}</div>` +
+        `<div class="tr"><i style="background:${color}"></i>${yLabel}<b>${fv(p[key])}${o.unit ? " " + o.unit : ""}</b></div>` +
+        `<div class="tr"><i style="background:transparent"></i>tok in / out<b>${fmtInt(p.tokIn)} / ${fmtInt(p.tokOut)}</b></div>` +
+        `<div class="tr"><i style="background:transparent"></i>ttft / itl<b>${fmt(p.ppSec, 2)}s / ${p.itl ? fmt(p.itl, 1) : "—"}ms</b></div>`;
+    });
+}
+
+function renderReqTable() {
+  $("reqTable").innerHTML = S.reqs.slice().reverse().map(r => `
+    <tr class="${r.model === S.active ? "active" : ""}">
+      <td class="num">${r.i}</td><td>${clockStr(r.time)}</td>
+      <td title="${r.model || ""}">${shortModel(r.model)}</td>
+      <td class="num">${fmtInt(r.tokIn)}</td><td class="num">${fmtInt(r.tokOut)}</td>
+      <td class="num">${r.pp === null ? "—" : fmt(r.pp, 1)}</td>
+      <td class="num">${r.tg === null ? "—" : fmt(r.tg, 1)}</td>
+      <td class="num">${fmt(r.ppSec, 2)}</td>
+      <td class="num">${r.itl === null ? "—" : fmt(r.itl, 1)}</td>
+      <td class="num">${fmt(r.e2e, 2)}</td></tr>`).join("")
+    || `<tr><td colspan="10" class="muted">no completed requests yet</td></tr>`;
+}
+
+
+
+/* ---------- 24 h activity ----------
+   The one panel that still says something when nothing is running: every other
+   chart here is request-driven and goes flat the moment the rig idles. Hourly
+   buckets come from the agent, so this covers the whole day rather than the
+   minutes this page happened to be open.
+
+   Stacked because generated and prompt tokens are the same unit and sum to
+   total work. Violet/amber rather than the obvious lime/amber: that pair
+   measures ΔE 1.4 under deuteranopia, i.e. indistinguishable. */
+function render24h() {
+  const svg = $("dayChart"), tip = $("dayTip");
+  const [W, H] = sizeSvg(svg);
+  const hist = S.history;
+  const models = (hist && hist.models) || {};
+  const names = Object.keys(models);
+  const n = 24;
+  const bars = Array.from({ length: n }, () => ({ in: 0, out: 0 }));
+  for (const k of names) {
+    const hh = models[k].hourly || [];
+    hh.forEach((x, i) => { if (i < n) { bars[i].in += x[0] || 0; bars[i].out += x[1] || 0; } });
+  }
+  const totals = bars.map(b => b.in + b.out);
+  const maxV = niceMax(Math.max(1, ...totals) * 1.12);
+
+  const hours = (hist && hist.hours) || [];
+  const hourLabel = i => {
+    if (!hours[i]) return "";
+    const d = new Date(hours[i] * 3600 * 1000);
+    return String(d.getHours()).padStart(2, "0");
+  };
+  const xLabels = [0, 6, 12, 18, 23].filter(i => hours[i])
+    .map(i => ({ x: i / (n - 1), label: hourLabel(i) }));
+  const g = frame(svg, W, H, maxV, "tokens / hour", xLabels, v => fmtBig(v));
+
+  if (!hist) {
+    emptyNote(svg, W, H, S.agentBase ? "collecting…" : "needs the host agent");
+    $("dayBadge").textContent = "—";
+    return;
+  }
+  if (!totals.some(v => v > 0)) {
+    emptyNote(svg, W, H, "no traffic in the last 24 h");
+    $("dayBadge").textContent = "idle 24 h";
+    return;
+  }
+
+  const slot = g.pw / n;
+  const bw = Math.max(3, slot - 3);
+  const Y = v => g.T + g.ph - (Math.min(v, maxV) / maxV) * g.ph;
+
+  const defs = el("defs", {});
+  for (const [id, col] of [["dayOut", "var(--s4)"], ["dayIn", "var(--s3)"]]) {
+    const lg = el("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 });
+    lg.appendChild(el("stop", { offset: "0%", "stop-color": col, "stop-opacity": .95 }));
+    lg.appendChild(el("stop", { offset: "100%", "stop-color": col, "stop-opacity": .45 }));
+    defs.appendChild(lg);
+  }
+  svg.appendChild(defs);
+
+  bars.forEach((b, i) => {
+    const cx = g.L + slot * (i + 0.5);
+    const base = g.T + g.ph;
+    const yOut = Y(b.out), hOut = Math.max(b.out > 0 ? 1.5 : 0, base - yOut);
+    if (hOut) {
+      svg.appendChild(el("rect", { x: cx - bw / 2, y: base - hOut, width: bw, height: hOut,
+        rx: Math.min(3, bw / 2), fill: "url(#dayOut)",
+        style: "filter: drop-shadow(0 0 5px rgba(251,191,36,.45))" }));
+    }
+    // 2px surface gap between stacked segments so the boundary reads as a
+    // boundary and not as part of either bar.
+    const yIn = Y(b.out + b.in), hIn = Math.max(b.in > 0 ? 1.5 : 0, (base - hOut) - yIn - 2);
+    if (hIn > 0) {
+      svg.appendChild(el("rect", { x: cx - bw / 2, y: yIn, width: bw, height: hIn,
+        rx: Math.min(3, bw / 2), fill: "url(#dayIn)" }));
+    }
+  });
+
+  // The rightmost bucket is the hour in progress — mark it rather than letting
+  // a partial hour read as a downturn.
+  const cxNow = g.L + slot * (n - 0.5);
+  svg.appendChild(el("line", { x1: cxNow, x2: cxNow, y1: g.T, y2: g.T + g.ph,
+    stroke: "var(--s1)", "stroke-width": 1, "stroke-dasharray": "2 3", opacity: .6,
+    "vector-effect": "non-scaling-stroke" }));
+  svg.appendChild(label({ x: cxNow - 4, y: g.T + 9, "text-anchor": "end",
+    fill: "var(--s1)", "font-size": 9.2, "font-family": "var(--mono)" }, "this hr"));
+
+  const tin = bars.reduce((a, b) => a + b.in, 0), tout = bars.reduce((a, b) => a + b.out, 0);
+  const peakI = totals.indexOf(Math.max(...totals));
+  $("dayBadge").textContent =
+    `${fmtBig(tout)} out · ${fmtBig(tin)} in · peak ${hourLabel(peakI)}:00`;
+
+  hoverLayer(svg, tip, g, n, i => g.L + slot * (i + 0.5), i => Y(bars[i].in + bars[i].out), i => {
+    const b = bars[i];
+    const per = names.map(k => ({ k, v: (models[k].hourly[i] || [0, 0])[1] }))
+      .filter(x => x.v > 0).sort((a, b2) => b2.v - a.v).slice(0, 3);
+    return `<div class="tt">${hourLabel(i)}:00${i === n - 1 ? " · in progress" : ""}</div>` +
+      `<div class="tr"><i style="background:var(--s4)"></i>generated<b>${fmtInt(b.out)}</b></div>` +
+      `<div class="tr"><i style="background:var(--s3)"></i>prompt in<b>${fmtInt(b.in)}</b></div>` +
+      per.map(x => `<div class="tr"><i style="background:transparent"></i>${shortModel(x.k)}<b>${fmtBig(x.v)}</b></div>`).join("");
+  });
+}
+
+/* ---------- GPU & host load (nvtop-style) ----------
+   Two charts, one legend. Compute and memory are different quantities and get
+   their own axes; within each chart every series is a percentage on the same
+   0-100 domain, so one axis per chart is honest.
+   Entity colours are fixed: card 0 cyan, card 1 pink, host lime — validated
+   all-pairs (worst CVD ΔE 12.4 deutan, 23.8 normal vision). */
+const RIG_COLORS = ["var(--s1)", "var(--s5)", "var(--s4)", "var(--s3)"];
+const RIG_GLOWS = ["rgba(34,211,238,.9)", "rgba(255,77,157,.9)",
+                   "rgba(251,191,36,.9)", "rgba(167,139,250,.9)"];
+const HOST_COLOR = "var(--s2)", HOST_GLOW = "rgba(163,230,53,.9)";
+
+function rigSeries(kind) {
+  const cards = S.gpu || [];
+  const out = cards.map((d, k) => ({
+    name: (d.name || "GPU " + k).replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, ""),
+    color: RIG_COLORS[k % RIG_COLORS.length], glow: RIG_GLOWS[k % RIG_GLOWS.length],
+    at: p => (kind === "util" ? p.gu : p.gm)[k],
+  }));
+  out.push({
+    name: kind === "util" ? "CPU" : "Host RAM", color: HOST_COLOR, glow: HOST_GLOW,
+    at: p => (kind === "util" ? p.cpu : p.ram),
+  });
+  return out;
+}
+
+function drawRig(svg, tip, series, yLabel, tipUnit) {
+  const [W, H] = sizeSvg(svg);
+  const pts = S.rigHist;
+  const tNow = now();
+  const g = frame(svg, W, H, 100, yLabel, timeLabels(2), v => Math.round(v) + "%");
+  if (!pts.length || !series.length) {
+    emptyNote(svg, W, H, S.host ? "waiting for samples…" : "no host telemetry");
+    return;
+  }
+  const X = p => g.L + ((p.t - (tNow - LIVE_WINDOW)) / LIVE_WINDOW) * g.pw;
+  const Y = v => g.T + g.ph - (Math.min(100, Math.max(0, v)) / 100) * g.ph;
+
+  const defs = el("defs", {});
+  series.forEach((s, k) => {
+    const id = `${svg.id}Grad${k}`;
+    const lg = el("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 });
+    lg.appendChild(el("stop", { offset: "0%",   "stop-color": s.color, "stop-opacity": .40 }));
+    lg.appendChild(el("stop", { offset: "60%",  "stop-color": s.color, "stop-opacity": .12 }));
+    lg.appendChild(el("stop", { offset: "100%", "stop-color": s.color, "stop-opacity": 0 }));
+    defs.appendChild(lg);
+  });
+  svg.appendChild(defs);
+
+  // Paint the quietest series first so a busy one is never buried by a fill.
+  const last = pts[pts.length - 1];
+  const order = series.map((_, k) => k)
+    .sort((a, b) => (series[a].at(last) || 0) - (series[b].at(last) || 0));
+
+  for (const k of order) {
+    const s = series[k];
+    let d = "";
+    for (const p of pts) {
+      const v = s.at(p);
+      if (v === null || v === undefined || !isFinite(v)) continue;
+      d += (d ? "L" : "M") + X(p).toFixed(1) + " " + Y(v).toFixed(1) + " ";
+    }
+    if (!d) continue;
+    svg.appendChild(el("path", {
+      d: d + `L${X(pts[pts.length - 1]).toFixed(1)} ${g.T + g.ph} L${X(pts[0]).toFixed(1)} ${g.T + g.ph} Z`,
+      fill: `url(#${svg.id}Grad${k})` }));
+    svg.appendChild(el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2,
+      "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
+      style: `filter: drop-shadow(0 0 6px ${s.glow})` }));
+    const v = s.at(last);
+    if (isFinite(v)) {
+      svg.appendChild(el("circle", { cx: X(last), cy: Y(v), r: 3, fill: s.color,
+        style: `filter: drop-shadow(0 0 7px ${s.color})` }));
+    }
+  }
+
+  drawSwitches(svg, g, tNow, false);
+
+  hoverLayer(svg, tip, g, pts.length, i => X(pts[i]), i => Y(series[0].at(pts[i]) || 0), i => {
+    const p = pts[i];
+    return `<div class="tt">t−${Math.max(0, Math.round(tNow - p.t))}s</div>` +
+      series.map(s => `<div class="tr"><i style="background:${s.color}"></i>${s.name}` +
+        `<b>${isFinite(s.at(p)) ? fmt(s.at(p), 0) + tipUnit : "—"}</b></div>`).join("");
+  });
+}
+
+function renderRigCharts() {
+  drawRig($("computeChart"), $("computeTip"), rigSeries("util"), "% util", "%");
+  drawRig($("memChart"), $("memTip"), rigSeries("mem"), "% memory", "%");
+
+  const cards = S.gpu || [], last = S.rigHist[S.rigHist.length - 1];
+  const watts = last ? last.power : 0;
+  const b = $("rigBadge");
+  b.textContent = watts > 0 ? `${fmt(watts, 0)} W` : (cards.length ? "idle" : "no GPU source");
+  b.className = "badge" + (cards.some(d => d.powerLimit && d.power >= d.powerLimit * 0.9) ? " warn" : "");
+
+  $("rigLegend").innerHTML = [
+    ...cards.map((d, k) => ({
+      n: (d.name || "GPU " + k).replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, ""),
+      c: RIG_COLORS[k % RIG_COLORS.length],
+      v: last && isFinite(last.gu[k]) ? `${fmt(last.gu[k], 0)}% · ${fmt(last.gm[k], 0)}%` : "",
+    })),
+    { n: "host", c: HOST_COLOR, v: last && isFinite(last.cpu) ? `${fmt(last.cpu, 0)}% · ${fmt(last.ram, 0)}%` : "" },
+  ].map(x => `<span><i style="background:${x.c}"></i>${x.n}` +
+    (x.v ? ` <b style="color:var(--text-primary);font-weight:700">${x.v}</b>` : "") + `</span>`).join("");
+}
+
+/* ---------- host & accelerators ---------- */
+function heatColor(p) {
+  if (!isFinite(p) || p <= 1) return "var(--surface-3)";
+  if (p < 15) return "var(--heat-1)";
+  if (p < 35) return "var(--heat-2)";
+  if (p < 60) return "var(--heat-3)";
+  if (p < 85) return "var(--heat-4)";
+  return "var(--heat-5)";
+}
+function meterRow(k, accent, pctv, valueText) {
+  const w = (pctv === null || pctv === undefined || !isFinite(pctv)) ? 0 : Math.min(100, Math.max(0, pctv));
+  return `<div class="hrow" style="--accent:${accent}">
+    <span class="hk">${k}</span>
+    <span class="bar"><i style="width:${w}%"></i></span>
+    <span class="hv">${valueText}</span>
+  </div>`;
+}
+/* Per-card detail. Lives above the host rows because VRAM headroom is the
+   first thing anyone looks for, and it scales to however many cards are
+   present rather than assuming two. */
+function renderGpuCards(out, g) {
+  if (g && g.length) {
+    for (const d of g) {
+      const memPct = d.memTotal ? (d.memUsed / d.memTotal) * 100 : (d.memUtil ?? null);
+      const bits = [];
+      if (d.temp !== undefined) bits.push(`${fmt(d.temp, 0)}°C`);
+      if (d.power !== undefined) bits.push(`${fmt(d.power, 0)}W${d.powerLimit ? "/" + fmt(d.powerLimit, 0) : ""}`);
+      if (d.clock !== undefined) bits.push(`${fmtInt(d.clock)}MHz`);
+      if (d.fan !== undefined) bits.push(`fan ${fmt(d.fan, 0)}%`);
+      // Idle cards downtrain to Gen1 and come back up under load, so this is
+      // informational — it only matters if the width is short while busy.
+      if (d.pcieGen) bits.push(`Gen${fmt(d.pcieGen, 0)}&times;${fmt(d.pcieWidth, 0)}`);
+      const hot = d.temp >= 83;
+      // Don't print "power cap" twice when the source already reported it.
+      const capped = !d.throttle && d.powerLimit && d.power >= d.powerLimit * 0.98;
+      // VRAM is the binding constraint on this rig; call it out before it bites.
+      const tight = memPct !== null && memPct >= 97;
+      const owner = d.procs && d.procs.length
+        ? `<div class="hrow" style="margin-top:1px"><span class="hk">held by</span>
+             <span class="hv" style="text-align:left">${d.procs.map(p =>
+               `${String(p.name).split("/").pop()} <span class="muted">${fmtBytes(p.memory)}</span>`).join(", ")}</span>
+             <span class="hv"></span></div>`
+        : "";
+      out.push(`<div class="gpucard">
+        <div class="gname"><b>#${d.index} ${d.name || "GPU"}</b>
+          ${hot ? '<span class="badge crit">thermal</span>' : ""}
+          ${capped ? '<span class="badge warn">power cap</span>' : ""}
+          ${d.throttle ? `<span class="badge warn">${d.throttle}</span>` : ""}
+          ${tight ? '<span class="badge warn">vram full</span>' : ""}
+          <span class="spacer" style="flex:1"></span><span class="muted">${bits.join(" · ")}</span></div>
+        ${meterRow("util", "var(--s1)", d.util ?? null, d.util === undefined ? "—" : fmt(d.util, 0) + "%")}
+        ${meterRow("vram", tight ? "var(--crit)" : "var(--s4)", memPct, d.memTotal
+            ? `${fmtBytes(d.memUsed)} / ${fmtBytes(d.memTotal)}`
+            : (d.memUtil !== undefined ? fmt(d.memUtil, 0) + "% bus" : "—"))}
+        ${owner}
+      </div>`);
+    }
+    // Efficiency: the number that decides whether a rig is worth running.
+    const watts = g.reduce((a, d) => a + (d.power || 0), 0);
+    const live = S.decode.ema || 0;
+    if (watts > 0) {
+      out.push(`<div class="hrow"><span class="hk">effic.</span>
+        <span class="hv" style="text-align:left">${live > 0 ? fmt(live / watts, 2) + " tok/s per W" : "idle"}
+          <span class="muted">${fmt(watts, 0)}W total</span></span>
+        <span class="hv">${live > 0 ? fmt(watts / live * 1000 / 3600, 2) + " Wh/1k tok" : ""}</span></div>`);
+    }
+  } else {
+    out.push(`<div class="nosrc">
+      <b>No GPU telemetry source.</b> VRAM, temperature, power draw and throttle
+      state cannot be inferred from llama.cpp — they need nvidia-smi on the box
+      holding the cards.<br>
+      Deploy <code>llama-host-agent.py</code> on the inference host (see the
+      project README), or point at any exporter with
+      <code>?gpu=host:port/path</code>.</div>`);
+  }
+
+}
+
+function renderHost() {
+  const h = S.host, g = S.gpu;
+  const out = [];
+
+  renderGpuCards(out, g);
+
+  if (h) {
+    out.push(meterRow("cpu", "var(--s5)", h.cpu,
+      `${fmt(h.cpu, 1)}% · pk ${fmt(h.cpuMax, 0)}%` + (h.temp ? ` · ${fmt(h.temp, 0)}°C` : "")));
+    if (h.cores.length) {
+      out.push(`<div class="cores" title="${h.cores.length} cores, per-core utilisation">` +
+        h.cores.map(c => `<i style="background:${heatColor(c)}" title="${fmt(c, 1)}%"></i>`).join("") + `</div>`);
+    }
+    out.push(meterRow("ram", "var(--s2)", h.memPct, `${fmtBytes(h.memUsed)} / ${fmtBytes(h.memTotal)}`));
+    if (isFinite(h.cached)) {
+      // An mmap'd GGUF lives in page cache. A model that is "loaded" but whose
+      // pages have been evicted still stalls on first token, and this is the
+      // only place that shows up.
+      out.push(`<div class="hrow" title="Page cache — where mmap'd GGUF pages live">
+        <span class="hk">cache</span>
+        <span class="hv" style="text-align:left">${fmtBytes(h.cached)} cached${isFinite(h.dirty) && h.dirty > 0 ? ` · ${fmtBytes(h.dirty)} dirty` : ""}</span>
+        <span class="hv muted">${fmtBytes(h.available)} avail</span></div>`);
+    }
+    const swapPct = h.swapTotal ? (h.swapUsed / h.swapTotal) * 100 : 0;
+    out.push(meterRow("swap", swapPct > 1 ? "var(--crit)" : "var(--s3)", swapPct,
+      h.swapUsed > 0 ? `${fmtBytes(h.swapUsed)} — paging` : "0 · none"));
+    out.push(`<div class="hrow"><span class="hk">load</span>
+      <span class="hv" style="text-align:left">${fmt(h.load1, 2)} · ${fmt(h.load5, 2)} · ${fmt(h.load15, 2)}
+        <span class="muted">1/5/15m</span></span>
+      <span class="hv">${h.cores.length ? fmt((h.load1 / h.cores.length) * 100, 0) + "% of " + h.cores.length : ""}</span></div>`);
+    if (h.rx !== null && h.rx !== undefined) {
+      out.push(`<div class="hrow" title="Averaged across llama-swap's ~5 s metrics refresh, over ${Object.keys(h.net).join(", ")}">
+        <span class="hk">net</span>
+        <span class="hv" style="text-align:left">&darr; ${fmtBytes(h.rx)}/s &nbsp; &uarr; ${fmtBytes(h.tx)}/s</span>
+        <span class="hv muted">${fmt(h.netAge, 0)}s ago</span></div>`);
+    } else {
+      out.push(`<div class="hrow"><span class="hk">net</span>
+        <span class="hv muted" style="text-align:left">waiting for a counter change…</span>
+        <span class="hv"></span></div>`);
+    }
+    if (isFinite(h.diskRead)) {
+      // Model swaps are multi-GB reads; this is what a load actually costs.
+      out.push(`<div class="hrow"><span class="hk">disk</span>
+        <span class="hv" style="text-align:left">r ${fmtBytes(h.diskRead)}/s &nbsp; w ${fmtBytes(h.diskWrite)}/s</span>
+        <span class="hv"></span></div>`);
+    }
+    if (h.procs && h.procs.length) {
+      const p = h.procs[0];
+      out.push(`<div class="hrow" title="Largest inference process — model memory as distinct from everything else">
+        <span class="hk">proc</span>
+        <span class="hv" style="text-align:left">${p.name} · ${fmtBytes(p.rss)} rss</span>
+        <span class="hv muted">${p.threads} thr</span></div>`);
+    }
+  } else if (S.swapErr === "cors") {
+    out.push(`<div class="nosrc">
+      <b>Host metrics blocked by CORS.</b> llama-swap answers <code>/v1/*</code> with
+      an <code>Access-Control-Allow-Origin</code> header but sends none on
+      <code>/metrics</code> or <code>/running</code>, so the browser discards both.
+      Nothing is wrong with the rig — the bytes are there, the page just isn't
+      allowed to read them.<br>
+      Run <code>llama-cors-proxy.py</code> (next to this file) and load the
+      dashboard from it, or point at an existing proxy with
+      <code>?proxy=host:port</code>.</div>`);
+  } else {
+    out.push(`<div class="muted" style="font-size: 11.5px">host metrics unavailable — ${S.swapErr || "connecting…"}</div>`);
+  }
+
+  $("hostGrid").innerHTML = out.join("");
+  const hb = $("hostBadge");
+  if (h) {
+    const swapping = h.swapUsed > 0;
+    // Name the source: an agent reading /proc at 1 s and a 5 s llama-swap
+    // snapshot are not the same measurement, and the difference matters.
+    hb.textContent = `${h.cores.length}c · ${fmtBytes(h.memTotal)}`
+      + (g && g.length ? ` · ${g.length} gpu` : "")
+      + (h.src === "agent" ? " · agent" : " · 5s snap");
+    hb.className = "badge" + (swapping ? " crit" : "");
+  } else hb.textContent = "—";
+}
+
+
+/* Scoreboard. Two different time bases live here on purpose and are labelled
+   as such: the 24 h columns come from the agent (everything llama-swap served,
+   whether or not this page was open), while the medians are this session's
+   measurements. Models never run show dashes rather than borrowed numbers. */
+function sparkBars(hourly, w, h) {
+  const max = Math.max(1, ...hourly.map(x => x[1]));
+  const bw = w / hourly.length;
+  const bars = hourly.map((x, i) => {
+    const bh = Math.max(x[1] > 0 ? 1.5 : 0, (x[1] / max) * h);
+    if (!bh) return "";
+    return `<rect x="${(i * bw).toFixed(1)}" y="${(h - bh).toFixed(1)}" ` +
+           `width="${Math.max(1, bw - 1).toFixed(1)}" height="${bh.toFixed(1)}" ` +
+           `rx="0.8" fill="var(--s4)" opacity="${x[1] > 0 ? .92 : .25}"/>`;
+  }).join("");
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" ` +
+         `role="img" aria-label="hourly tokens generated, last 24 hours">${bars}</svg>`;
+}
+
+function renderFleet() {
+  const loaded = S.models.filter(m => m.state === "loaded").length;
+  const hist = (S.history && S.history.models) || {};
+  const seen = Object.keys(S.byModel).filter(k => S.byModel[k].reqs > 0).length;
+  $("fleetBadge").textContent = `${loaded} loaded / ${S.models.length}` + (seen ? ` · ${seen} measured` : "");
+  const hb = $("histBadge");
+  if (S.history) {
+    const tot = Object.values(hist).reduce((a, v) => a + v.out, 0);
+    hb.textContent = `24 h · ${fmtBig(tot)} tok out`;
+    hb.className = "badge on";
+  } else {
+    hb.textContent = S.agentBase ? "24 h · collecting" : "24 h · needs agent";
+    hb.className = "badge";
+  }
+
+  if (!S.models.length) {
+    $("fleetTable").innerHTML = `<tr><td colspan="16" class="muted">no models reported</td></tr>`;
+    return;
+  }
+  // Rebuilding 23 rows with a 24-bar sparkline each, 2.5x a second, is waste.
+  const sig = S.models.map(m => m.id + m.state).join() + "|" + S.active + "|" +
+              Object.keys(S.byModel).map(k => k + S.byModel[k].reqs).join() + "|" +
+              (S.history ? S.history.now : 0);
+  if (sig === S.fleetSig && Date.now() - S.fleetAt < 2000) return;
+  S.fleetSig = sig; S.fleetAt = Date.now();
+
+  const order = { loaded: 0, loading: 1, unloaded: 2 };
+  const med = a => (a && a.length ? pct(a.slice().sort((x, y) => x - y), 50) : null);
+
+  $("fleetTable").innerHTML = S.models.slice().sort((a, b) => {
+    // Anything with 24 h traffic first, then measured, then by state.
+    const ha = hist[a.id] ? 0 : 1, hbb = hist[b.id] ? 0 : 1;
+    const ra = S.byModel[a.id], rb = S.byModel[b.id];
+    const ma = ra && ra.reqs > 0 ? 0 : 1, mb = rb && rb.reqs > 0 ? 0 : 1;
+    return ha - hbb || ma - mb || (order[a.state] ?? 3) - (order[b.state] ?? 3)
+        || a.id.localeCompare(b.id);
+  }).map(m => {
+    const isActive = m.id === S.active;
+    const cls = m.state === "loaded" ? "on" : m.state === "loading" ? "warn" : "";
+    const pick = m.state === "loaded" && !isActive;
+    const b = S.byModel[m.id], h = hist[m.id];
+    const title = pick ? "Watch this model" : isActive ? "Currently watching"
+      : "Not loaded — polling it would force a model swap";
+    const tg = b ? med(b.tg) : null, tt = b ? med(b.ttft) : null, sp = b ? med(b.spec) : null;
+    const pp = b ? med(b.pp) : null, il = b ? med(b.itl) : null;
+    return `<tr class="${isActive ? "active" : ""} ${pick ? "pick" : ""}" ${pick ? `data-mid="${m.id}"` : ""} title="${title}">
+      <td title="${m.id}">${isActive ? "&#9656; " : ""}${shortModel(m.id)}</td>
+      <td><span class="badge ${cls}">${m.state === "unloaded" ? "—" : m.state}</span></td>
+      <td class="num" style="color:var(--s4);font-weight:700">${h ? fmtBig(h.out) : "—"}</td>
+      <td>${h ? sparkBars(h.hourly, 104, 15) : ""}</td>
+      <td class="num">${h ? fmtBig(h.in) : "—"}</td>
+      <td class="num">${h ? h.reqs : "—"}</td>
+      <td class="num">${b && b.tokIn ? fmtBig(b.tokIn) : "—"}</td>
+      <td class="num">${b && b.tokOut ? fmtBig(b.tokOut) : "—"}</td>
+      <td class="num">${b && b.reqs ? b.reqs : "—"}</td>
+      <td class="num">${tg === null ? "—" : fmt(tg, 1)}</td>
+      <td class="num">${pp === null ? "—" : fmt(pp, 0)}</td>
+      <td class="num">${tt === null ? "—" : fmt(tt, 2)}</td>
+      <td class="num">${il === null ? "—" : fmt(il, 1)}</td>
+      <td class="num">${sp === null ? "—" : fmt(sp, 2)}</td>
+      <td class="num">${b && b.vram ? fmtBytes(b.vram) : "—"}</td>
+      <td class="num">${b && b.loadMs ? fmt(b.loadMs / 1000, 1) + "s" : "—"}</td></tr>`;
+  }).join("");
+}
+
+function renderLog() {
+  $("eventLog").innerHTML = S.events.map(e =>
+    `<div class="row"><time>${clockStr(e.t)}</time><span class="msg">${e.msg}</span></div>`).join("")
+    || `<div class="muted" style="padding:2px 0">no events yet</div>`;
+}
+
+/* ============================ controls ============================ */
+$("hostInput").value = HOST.replace(/^http:\/\//, "");
+renderHostList();
+
+function applyHost() {
+  const v = normalizeHost($("hostInput").value);
+  if (!v) return;
+  HOST = v;
+  MONITOR_HOST = monitorHost(HOST);
+  localStorage.setItem("llamaLiveHost", HOST);
+  rememberHost(HOST);
+  $("hostInput").value = HOST.replace(/^http:\/\//, "");
+  // A different server is a different fleet: measured history does not carry.
+  S.models = []; S.lastOk = 0; S.err = null;
+  S.live = []; S.ctxHist = [];
+  S.reqs = []; S.reqSeq = 0; S.switches = []; S.byModel = {}; S.metricsBy = {}; S.loadStart = {};
+  S.host = null; S.netMark = null; S.agentBase = null; S.agentProbedAt = 0;
+  S.gpu = null; S.gpuUrl = null; S.gpuProbedAt = 0; S.rigHist = []; S.history = null;
+  S.swapBase = null; S.swapErr = null;
+  S.ok = { swap: null, llama: null, host: null, gpu: null };
+  setActive(null);
+  logEvent(`server &rarr; <b>${HOST}</b>`);
+}
+$("applyBtn").addEventListener("click", applyHost);
+$("hostInput").addEventListener("keydown", e => { if (e.key === "Enter") applyHost(); });
+
+$("pauseBtn").addEventListener("click", () => {
+  S.paused = !S.paused;
+  $("pauseBtn").textContent = S.paused ? "Resume" : "Pause";
+  $("pauseBtn").setAttribute("aria-pressed", String(S.paused));
+  logEvent(S.paused ? "polling paused" : "polling resumed");
+});
+
+$("tableBtn").addEventListener("click", () => {
+  const show = $("reqTableWrap").hidden;
+  $("reqTableWrap").hidden = !show;
+  $("reqCharts").hidden = show;
+  $("tableBtn").setAttribute("aria-pressed", String(show));
+  $("tableBtn").textContent = show ? "Charts" : "Table";
+});
+
+// Only loaded models carry data-mid, so unloaded rows can't trigger a swap.
+$("fleetTable").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-mid]");
+  if (!tr) return;
+  const id = tr.getAttribute("data-mid");
+  if (!id || id === S.active) return;
+  setActive(id);
+  logEvent(`now watching <b>${id}</b>`);
+});
+
+// Charts are sized from their box, so a resize has to redraw, not rescale.
+let resizeT = null;
+addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(render, 120); });
+
+/* ============================ boot ============================ */
+renderLog();
+loop(pollModels, POLL_MODELS, "swap");
+loop(pollRunning, POLL_RUNNING, "running");
+loop(async () => { await pollProps(); await pollSlots(); }, POLL_SLOTS, "llama");
+loop(pollMetrics, POLL_METRICS, "llama");
+loop(pollHost, POLL_HOST, "host");
+loop(pollHistory, 5000, "history");
+loop(pollGpu, POLL_GPU, "gpu");
+setInterval(render, 400);
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Minimal configuration for the bundled mock_server.py.
+base_url: http://127.0.0.1:8099/v1
+api_key: none
+output_dir: mock-results
+request_timeout: 60
+request_retries: 0
+warmup_retries: 0
+categories: [tools, coding, reasoning]
+suite_profile: compact
+request_concurrency: 1
+seed: 1
+
+models:
+  - name: mock-model
+    ctx: 32768
+    thinking: false

@@ -1,0 +1,1788 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>FleetBench Dashboard // Model Intelligence</title>
+  <style>
+    :root {
+      --ink: #f7fbff;
+      --muted: #a5acc7;
+      --dim: #626a88;
+      --bg: #010104;
+      --bg-2: #05050d;
+      --panel: rgba(7, 8, 20, .92);
+      --panel-solid: #070914;
+      --line: rgba(0, 246, 255, .15);
+      --line-strong: rgba(255, 43, 214, .36);
+      --acid: #ff2bd6;
+      --mint: #00f6ff;
+      --cyan: #00c8ff;
+      --amber: #ffe600;
+      --coral: #ff3b81;
+      --violet: #9d5cff;
+      --shadow: 0 24px 70px rgba(0,0,0,.72), 0 0 26px rgba(0,246,255,.035);
+      --radius: 13px;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% -8%, rgba(255, 43, 214, .17), transparent 34rem),
+        radial-gradient(circle at 90% 4%, rgba(0, 246, 255, .13), transparent 32rem),
+        linear-gradient(180deg, #010104 0%, #03030a 48%, #000 100%);
+      font-family: var(--sans);
+      font-variant-numeric: tabular-nums;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .38;
+      background-image:
+        linear-gradient(rgba(0,246,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,43,214,.022) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: linear-gradient(to bottom, black, transparent 88%);
+    }
+
+    body::after {
+      content: ""; position: fixed; inset: 0; z-index: 999; pointer-events: none; opacity: .035;
+      background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(0,246,255,.5) 4px);
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--acid);
+      outline-offset: 2px;
+    }
+
+    .shell { width: min(2480px, calc(100% - 48px)); margin: 0 auto; padding: 28px 0 72px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 34px; }
+    .brand { display: flex; align-items: center; gap: 13px; letter-spacing: -.03em; font-weight: 760; }
+    .brand-mark {
+      width: 38px; height: 38px; border: 1px solid rgba(199,243,107,.45); border-radius: 12px;
+      display: grid; place-items: center; color: var(--acid); background: rgba(199,243,107,.08);
+      box-shadow: inset 0 0 24px rgba(199,243,107,.04), 0 0 30px rgba(199,243,107,.08);
+    }
+    .brand-mark svg { width: 22px; height: 22px; }
+    .slash { color: var(--dim); font-weight: 450; }
+    .top-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+    .source-pill {
+      flex: 0 0 auto; max-width: 370px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding: 9px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted);
+      background: rgba(255,255,255,.025); font: 11px var(--mono); text-transform: uppercase; letter-spacing: .08em;
+    }
+    .source-pill.missing-answers { color: var(--amber); border-color: rgba(255,201,104,.32); background: rgba(255,201,104,.055); }
+
+    .btn {
+      border: 1px solid var(--line-strong); background: rgba(255,255,255,.035); border-radius: 11px;
+      padding: 9px 13px; cursor: pointer; transition: .18s ease; font-size: 12px; font-weight: 700;
+      letter-spacing: .01em;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: rgba(199,243,107,.52); background: rgba(199,243,107,.08); }
+    .btn:disabled { cursor: wait; opacity: .62; transform: none; }
+    .btn.primary { background: var(--acid); border-color: var(--acid); color: #12200e; box-shadow: 0 8px 24px rgba(199,243,107,.12); }
+    .btn.primary:hover { background: #d4fb82; }
+    .btn.ghost { border-color: transparent; color: var(--muted); }
+    .btn.needs-attention { color: var(--amber); border-color: rgba(255,201,104,.34); background: rgba(255,201,104,.07); }
+    .btn.icon { display: inline-flex; align-items: center; gap: 7px; }
+    .btn svg { width: 15px; height: 15px; }
+
+    .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr); gap: 40px; align-items: end; margin: 18px 0 31px; }
+    .eyebrow { color: var(--mint); font: 11px var(--mono); font-weight: 700; letter-spacing: .16em; text-transform: uppercase; margin-bottom: 13px; }
+    h1 { margin: 0; max-width: 840px; font-size: clamp(42px, 6.2vw, 88px); font-weight: 570; line-height: .91; letter-spacing: -.075em; }
+    h1 em { color: var(--acid); font-style: normal; }
+    .hero-copy { max-width: 560px; justify-self: end; color: var(--muted); line-height: 1.65; font-size: 14px; padding-bottom: 4px; }
+    .hero-copy strong { color: var(--ink); font-weight: 650; }
+
+    .dropzone {
+      min-height: 295px; border: 1px dashed rgba(199,243,107,.33); border-radius: 26px; display: grid; place-items: center;
+      text-align: center; background: linear-gradient(145deg, rgba(199,243,107,.045), rgba(88,214,230,.025));
+      box-shadow: var(--shadow); position: relative; overflow: hidden; padding: 34px; transition: .2s ease;
+    }
+    .dropzone::after { content: ""; position: absolute; inset: -60%; background: conic-gradient(from 180deg, transparent, rgba(199,243,107,.05), transparent 28%); animation: orbit 18s linear infinite; }
+    @keyframes orbit { to { transform: rotate(360deg); } }
+    .dropzone.dragging { border-color: var(--acid); transform: scale(1.005); background: rgba(199,243,107,.08); }
+    .drop-inner { position: relative; z-index: 1; }
+    .drop-icon { width: 58px; height: 58px; margin: 0 auto 18px; border: 1px solid rgba(199,243,107,.28); border-radius: 18px; display: grid; place-items: center; color: var(--acid); background: rgba(199,243,107,.07); }
+    .drop-icon svg { width: 27px; height: 27px; }
+    .dropzone h2 { margin: 0 0 7px; font-size: 21px; letter-spacing: -.025em; }
+    .dropzone p { color: var(--muted); margin: 0 0 22px; font-size: 13px; }
+    .drop-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    .drop-hint { margin-top: 18px !important; color: var(--dim) !important; font: 10px var(--mono) !important; letter-spacing: .06em; text-transform: uppercase; }
+
+    .error-banner { display: none; margin: 16px 0; padding: 13px 15px; border-radius: 12px; background: rgba(255,117,95,.1); border: 1px solid rgba(255,117,95,.26); color: #ffb2a5; font-size: 13px; }
+    .error-banner.show { display: block; }
+
+    #dashboard { display: none; }
+    #dashboard.visible { display: block; animation: reveal .35s ease; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(8px); } }
+
+    .control-deck {
+      position: sticky; top: 10px; z-index: 20; display: grid; grid-template-columns: 1.35fr .9fr 1fr 1fr 1fr auto;
+      gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: rgba(10, 22, 19, .89);
+      backdrop-filter: blur(18px); box-shadow: 0 14px 50px rgba(0,0,0,.26); margin-bottom: 14px;
+    }
+    .control { min-width: 0; }
+    .control label { display: block; margin: 0 0 7px; color: var(--muted); font: 11px var(--mono); font-weight: 750; text-transform: uppercase; letter-spacing: .09em; }
+    .control input, .control select {
+      width: 100%; height: 40px; color: var(--ink); background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 9px; padding: 0 12px; font-size: 14px;
+    }
+    .control input[type="date"] { color-scheme: dark; }
+    .control-reset { align-self: end; height: 40px; }
+    .filter-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .quick-ranges { display: flex; gap: 4px; }
+    .mini-btn { height: 40px; min-width: 40px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.025); font: 11px var(--mono); cursor: pointer; }
+    .mini-btn:hover { color: var(--acid); border-color: rgba(199,243,107,.35); }
+
+    .chip-deck { display: flex; gap: 8px; flex-wrap: wrap; padding: 2px 2px 16px; }
+    .filter-chip { border: 1px solid var(--line); background: rgba(255,255,255,.025); color: var(--muted); border-radius: 999px; padding: 8px 13px; font-size: 13px; cursor: pointer; transition: .15s ease; }
+    .filter-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+    .filter-chip.active { color: #10200d; background: var(--acid); border-color: var(--acid); font-weight: 750; }
+    .filter-chip.category.active { color: var(--ink); background: rgba(88,230,176,.12); border-color: rgba(88,230,176,.45); }
+    .filter-chip.metric { color: var(--violet); border-color: rgba(157,92,255,.32); }
+    .filter-chip.metric.active { color: #09000a; background: var(--violet); border-color: var(--violet); }
+    .chip-spacer { width: 1px; background: var(--line); margin: 2px 2px; }
+
+    .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 12px; }
+    .kpi { position: relative; min-height: 142px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 18px; overflow: hidden; }
+    .kpi::before { content: ""; position: absolute; width: 76px; height: 76px; border-radius: 50%; right: -32px; top: -32px; background: var(--glow, var(--mint)); opacity: .12; filter: blur(2px); }
+    .kpi-label { color: var(--muted); font: 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .kpi-value { margin-top: 20px; font-size: clamp(25px, 2.5vw, 39px); line-height: 1; font-weight: 610; letter-spacing: -.045em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi-value.model-value { margin-top: 15px; font-size: clamp(18px, 1.65vw, 27px); line-height: 1.08; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+    .kpi-note { color: var(--dim); font-size: 10px; margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi-value.model-value + .kpi-note { white-space: normal; line-height: 1.35; }
+
+    .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+    .card { grid-column: span 6; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: 0 16px 42px rgba(0,0,0,.12); min-width: 0; overflow: hidden; }
+    .card.wide { grid-column: span 12; }
+    .card.quality-overview { grid-column: 4 / span 6; }
+    .card.profile-overview { grid-column: 2 / span 10; }
+    .card.third { grid-column: span 4; }
+    .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding: 23px 24px 14px; }
+    .card-kicker { color: var(--mint); font: 11px var(--mono); letter-spacing: .11em; text-transform: uppercase; margin-bottom: 7px; }
+    .card-title { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
+    .card-desc { color: var(--muted); font-size: 12px; margin-top: 5px; line-height: 1.5; }
+    .comparison-title-row { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+    .comparison-title-row .card-title { flex: 0 0 auto; }
+    .comparison-title-row .card-desc { flex: 1 1 520px; margin-top: 0; font-size: 13px; line-height: 1.5; }
+    .card-badge { color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px; font: 11px var(--mono); white-space: nowrap; }
+    .card-body { padding: 10px 24px 24px; min-height: 310px; }
+    .card-body.compact { min-height: 210px; }
+    .card-body.no-pad { padding: 8px 0 0; }
+
+    .leader-list { display: grid; gap: 12px; }
+    .leader-row { display: grid; grid-template-columns: minmax(175px, .88fr) minmax(130px, 1fr) 58px; align-items: center; gap: 12px; }
+    .leader-name { min-width: 0; }
+    .leader-name strong { display: block; font-size: 14px; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }
+    .leader-name small { color: var(--muted); font: 11px/1.45 var(--mono); }
+    .bar-track { height: 9px; border-radius: 99px; background: rgba(255,255,255,.055); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--mint), var(--acid)); box-shadow: 0 0 18px rgba(199,243,107,.18); }
+    .leader-score { text-align: right; font: 700 17px var(--mono); color: var(--acid); }
+    .leader-score small { color: var(--dim); font-size: 9px; }
+
+    .matrix-wrap { overflow: auto; padding-bottom: 3px; }
+    .matrix { display: grid; gap: 5px; min-width: 520px; }
+    .matrix-label { min-height: 34px; display: flex; align-items: center; padding-right: 8px; color: #a9b6b1; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .matrix-head { color: var(--dim); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .06em; justify-content: center; text-align: center; padding: 0 2px; }
+    .heat-cell { min-width: 76px; min-height: 37px; border-radius: 8px; display: grid; place-items: center; font: 700 12px var(--mono); border: 1px solid rgba(255,255,255,.035); position: relative; }
+    .heat-cell.empty { color: var(--dim); background: rgba(255,255,255,.025); }
+    .heat-cell[data-tip]:hover::after, .tip:hover::after, .tip:focus-visible::after {
+      content: attr(data-tip); position: fixed; z-index: 99; left: var(--tip-x, 50vw); top: var(--tip-y, 20px); transform: translateX(-100%);
+      width: max-content; max-width: min(420px, calc(100vw - 24px)); padding: 13px 15px; border-radius: 10px;
+      color: #dce4f7; background: #0b0d20; border: 1px solid rgba(0,246,255,.3); box-shadow: 0 18px 48px rgba(0,0,0,.72);
+      font: 12px/1.65 var(--sans); letter-spacing: 0; white-space: pre-line; text-align: left; pointer-events: none;
+    }
+
+    .svg-chart { width: 100%; min-height: 340px; display: block; overflow: visible; }
+    .svg-chart text { font-family: var(--mono); font-size: 10.5px; }
+    .chart-empty { height: 260px; display: grid; place-items: center; color: var(--dim); text-align: center; font: 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .07em; }
+    .legend { display: flex; gap: 16px; row-gap: 9px; flex-wrap: wrap; margin-top: 11px; color: var(--muted); font: 11px var(--mono); }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-dot { width: 7px; height: 7px; border-radius: 50%; }
+    .legend.pareto-legend {
+      display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 18px;
+      padding: 15px 17px; border: 1px solid var(--line); border-radius: 10px;
+      color: #c5cce2; background: rgba(0,0,0,.24); font-size: 13px; line-height: 1.35;
+    }
+    .pareto-legend .legend-item { gap: 10px; }
+    .pareto-legend .legend-dot {
+      width: 11px; height: 11px; flex: 0 0 11px;
+      box-shadow: 0 0 10px color-mix(in srgb, currentColor 55%, transparent);
+    }
+    .legend-index { min-width: 18px; color: var(--ink); font-weight: 750; }
+
+    .task-matrix .matrix-wrap { container-type: inline-size; }
+    .task-matrix .matrix { min-width: 0; width: max-content; margin-inline: auto; gap: 3px; }
+    .task-matrix .matrix-label:not(.matrix-head) { position: sticky; left: 0; z-index: 2; width: 190px; min-height: 27px; background: var(--panel-solid); }
+    .task-matrix .matrix-head { position: sticky; top: 0; z-index: 3; width: auto; min-height: 72px; writing-mode: vertical-rl; transform: rotate(180deg); justify-content: flex-start; padding-top: 6px; background: var(--panel-solid); }
+    .task-matrix .heat-cell { min-height: 27px; }
+    .task-matrix .heat-cell { min-width: 44px; width: auto; border-radius: 6px; cursor: pointer; font-size: 9.5px; letter-spacing: -.02em; }
+    .task-section { color: var(--mint); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+
+    .comparison-wrap { overflow: visible; border-top: 1px solid var(--line); }
+    .comparison-table { width: 100%; min-width: 0; table-layout: fixed; font-size: 10px; }
+    .comparison-table th { cursor: pointer; padding: 9px 5px; white-space: normal; line-height: 1.25; overflow-wrap: anywhere; }
+    .comparison-table td { padding: 9px 5px; }
+    .comparison-table th[aria-sort="descending"]::after { content: " \2193"; color: var(--acid); }
+    .comparison-table th[aria-sort="ascending"]::after { content: " \2191"; color: var(--acid); }
+    .comparison-table th:first-child, .comparison-table td:first-child { width: 2.5%; text-align: center; }
+    .comparison-table th:nth-child(2), .comparison-table td:nth-child(2) { width: 15%; }
+    .comparison-table th:nth-child(3), .comparison-table td:nth-child(3) { width: 7%; }
+    .comparison-table th:nth-child(n+4):nth-child(-n+14),
+    .comparison-table td:nth-child(n+4):nth-child(-n+14) { width: 4.4%; }
+    .comparison-table th:nth-child(15), .comparison-table td:nth-child(15),
+    .comparison-table th:nth-child(16), .comparison-table td:nth-child(16) { width: 3.4%; }
+    .comparison-table th:nth-child(n+17),
+    .comparison-table td:nth-child(n+17) { width: 4.7%; }
+    .comparison-table th:first-child, .comparison-table th:nth-child(2) { z-index: 6; background: #0f1e19; }
+    .comparison-table td:first-child, .comparison-table td:nth-child(2) { background: #101e1a; }
+    .comparison-table tbody tr:hover td:first-child, .comparison-table tbody tr:hover td:nth-child(2) { background: #14251f; }
+    .comparison-rank { color: var(--dim); font: 700 11px var(--mono); }
+    .comparison-model strong { display: block; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+    .comparison-model span { display: block; margin-top: 4px; color: var(--dim); font: 9px var(--mono); }
+    .comparison-score { min-width: 0; }
+    .comparison-score strong { display: block; font: 750 13px var(--mono); }
+    /* Supporting points/task counts beneath each Section 01 percentage need
+       enough luminance to remain readable against the near-black cells. */
+    .comparison-score span { display: block; margin-top: 3px; color: #9aa3c2; font: 8px var(--mono); }
+    .comparison-score.overall strong { font-size: 15px; }
+    .comparison-score.excellent strong { color: #42f58d; }
+    .comparison-score.good strong { color: #a8f06a; }
+    .comparison-score.warn strong { color: #ffe45c; }
+    .comparison-score.caution strong { color: #ff9f43; }
+    .comparison-score.poor strong { color: #ff526d; }
+    .comparison-score.empty strong { color: var(--dim); }
+    /* A short column is shown in whole percent and its task count is dotted,
+       so a thin sample is visible without hiding the number. */
+    .comparison-score.thin-sample span { border-bottom: 1px dotted currentColor; opacity: .9; }
+    .comparison-score.ci-overlap { box-shadow: inset 0 0 0 1px rgba(255,230,0,.22); }
+    .comparison-score.ci-overlap strong::after { content: " ≈"; color: var(--amber); font-size: .62em; }
+    .comparison-score.excellent { --band: #42f58d; }
+    .comparison-score.good { --band: #a8f06a; }
+    .comparison-score.warn { --band: #ffe45c; }
+    .comparison-score.caution { --band: #ff9f43; }
+    .comparison-score.poor { --band: #ff526d; }
+    .comparison-score.empty { --band: var(--dim); }
+
+    /* Suite score is the headline verdict, not a peer of the category columns: give it its own lane. */
+    .comparison-table th.suite-head,
+    .comparison-table td.suite-cell {
+      background: linear-gradient(180deg, rgba(0,246,255,.09), rgba(255,43,214,.05));
+      box-shadow: inset 1px 0 0 rgba(0,246,255,.34), inset -1px 0 0 rgba(0,246,255,.34);
+    }
+    .comparison-table th.suite-head {
+      color: var(--mint); letter-spacing: .05em;
+      text-shadow: 0 0 14px rgba(0,246,255,.4);
+      box-shadow: inset 1px 0 0 rgba(0,246,255,.34), inset -1px 0 0 rgba(0,246,255,.34), inset 0 2px 0 var(--mint);
+    }
+    .comparison-table tbody tr:hover td.suite-cell {
+      background: linear-gradient(180deg, rgba(0,246,255,.15), rgba(255,43,214,.08));
+    }
+    .comparison-table tbody tr:last-child td.suite-cell {
+      box-shadow: inset 1px 0 0 rgba(0,246,255,.34), inset -1px 0 0 rgba(0,246,255,.34), inset 0 -2px 0 rgba(0,246,255,.34);
+    }
+    .suite-cell strong { letter-spacing: -.01em; text-shadow: 0 0 16px color-mix(in srgb, var(--band, var(--mint)) 30%, transparent); }
+    .suite-meter { height: 4px; margin-top: 7px; border-radius: 99px; background: rgba(255,255,255,.09); overflow: hidden; }
+    .suite-meter i {
+      display: block; height: 100%; border-radius: inherit; background: var(--band, var(--mint));
+      box-shadow: 0 0 10px color-mix(in srgb, var(--band, var(--mint)) 60%, transparent);
+    }
+    .comparison-number { color: var(--ink); font: 700 11px var(--mono); }
+    .comparison-number span { display: block; margin-top: 3px; color: var(--dim); font-size: 8px; }
+    .state-pill { display: inline-block; padding: 3px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 700 9px var(--mono); }
+    .state-pill.pass { color: #42f58d; }
+    .state-pill.partial { color: #ffe45c; }
+    .state-pill.fail { color: #ff526d; }
+    .state-pill.timeout, .state-pill.truncated { color: #ff9f43; }
+    .state-pill.parse_error, .state-pill.infra_error, .state-pill.context_overflow { color: #ff6bff; }
+    .comparison-note { padding: 11px 20px 15px; color: var(--dim); font: 9px/1.5 var(--mono); }
+    .compare-card .card-kicker { font-size: 13px; }
+    .compare-card .card-title { font-size: 24px; }
+    .compare-card .card-desc { font-size: 15px; }
+    .compare-card .card-badge { font-size: 13px; }
+    .compare-card .comparison-table { font-size: 16px; }
+    .compare-card .comparison-table th { font-size: 14px; line-height: 1.35; }
+    .compare-card .comparison-rank { font-size: 15px; }
+    .compare-card .comparison-model strong { font-size: 18px; }
+    .compare-card .comparison-model span { font-size: 13px; }
+    .compare-card .comparison-score strong { font-size: 19px; }
+    .compare-card .comparison-score.overall strong { font-size: 27px; }
+    .compare-card .comparison-score span,
+    .compare-card .comparison-number span { font-size: 13px; }
+    .compare-card .comparison-number { font-size: 16px; }
+    .compare-card .comparison-note { font-size: 13px; line-height: 1.65; }
+    .comparison-table th.tip { position: relative; overflow: visible; }
+    .comparison-table th.tip:hover,
+    .comparison-table th.tip:focus-visible { z-index: 120; }
+    .comparison-table th.tip::before {
+      content: "?"; display: inline-grid; place-items: center; width: 13px; height: 13px;
+      margin-left: 4px; border: 1px solid rgba(0,246,255,.3); border-radius: 50%;
+      color: var(--mint); font: 8px var(--mono); vertical-align: 1px; opacity: .72;
+    }
+
+    .table-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 20px 12px; }
+    .table-tools input { min-width: 220px; flex: 1; height: 34px; background: rgba(255,255,255,.035); border: 1px solid var(--line); color: var(--ink); border-radius: 9px; padding: 0 10px; font-size: 11px; }
+    .table-wrap { overflow: auto; max-height: 560px; border-top: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    th { position: sticky; top: 0; z-index: 3; color: var(--dim); background: #0f1e19; text-align: left; padding: 11px 12px; font: 8px var(--mono); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; cursor: pointer; }
+    th:hover { color: var(--acid); }
+    td { padding: 10px 12px; border-top: 1px solid rgba(197,226,215,.07); color: var(--muted); white-space: nowrap; }
+    tbody tr:hover td { background: rgba(199,243,107,.025); color: var(--ink); }
+    td.model-cell { color: var(--ink); font-weight: 650; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+    td.detail-cell { max-width: 390px; overflow: hidden; text-overflow: ellipsis; }
+    .score-pill { display: inline-flex; min-width: 43px; justify-content: center; padding: 4px 7px; border-radius: 999px; font: 700 9px var(--mono); }
+    .score-excellent { color: #42f58d; background: rgba(66,245,141,.11); }
+    .score-good { color: #a8f06a; background: rgba(168,240,106,.10); }
+    .score-warn { color: #ffe45c; background: rgba(255,228,92,.10); }
+    .score-caution { color: #ff9f43; background: rgba(255,159,67,.11); }
+    .score-poor { color: #ff526d; background: rgba(255,82,109,.11); }
+    .table-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 20px 16px; color: var(--dim); font: 9px var(--mono); }
+    .pagination { display: flex; gap: 6px; }
+
+    .diagnostic-layout { display: grid; grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr); gap: 28px; min-height: 310px; }
+    .reason-panel { padding-right: 28px; border-right: 1px solid var(--line); }
+    .subhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; color: var(--ink); font-size: 12px; font-weight: 700; }
+    .subhead small { color: var(--dim); font: 8px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .reason-list { display: grid; gap: 12px; }
+    .reason-row { display: grid; grid-template-columns: 118px 1fr 34px; align-items: center; gap: 10px; }
+    .reason-name { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .reason-track { height: 7px; border-radius: 99px; background: rgba(255,255,255,.05); overflow: hidden; }
+    .reason-fill { height: 100%; min-width: 2px; border-radius: inherit; background: var(--reason-color, var(--mint)); }
+    .reason-count { color: var(--muted); text-align: right; font: 9px var(--mono); }
+    .reason-detail { margin-top: 16px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--dim); background: rgba(255,255,255,.02); font: 9px/1.55 var(--mono); }
+    .case-files { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    .case-file { width: 100%; min-width: 0; text-align: left; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.022); padding: 12px; cursor: pointer; transition: .16s ease; }
+    .case-file:hover { transform: translateY(-1px); border-color: rgba(199,243,107,.32); background: rgba(199,243,107,.035); }
+    .case-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .case-model { color: var(--ink); font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .case-task { margin-top: 7px; color: var(--mint); font: 8px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .case-reason { min-height: 31px; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .case-evidence { display: flex; gap: 9px; margin-top: 9px; color: var(--dim); font: 8px var(--mono); }
+    .evidence-btn { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; color: var(--mint); background: rgba(88,230,176,.04); font: 8px var(--mono); cursor: pointer; white-space: nowrap; }
+    .evidence-btn:hover { border-color: rgba(88,230,176,.4); }
+
+    .evidence-overlay { position: fixed; inset: 0; z-index: 200; display: grid; grid-template-columns: 1fr minmax(420px, 680px); visibility: hidden; pointer-events: none; }
+    .evidence-overlay.open { visibility: visible; pointer-events: auto; }
+    .drawer-scrim { grid-column: 1; border: 0; padding: 0; background: rgba(0,7,5,.68); opacity: 0; backdrop-filter: blur(4px); transition: opacity .24s ease; cursor: default; }
+    .evidence-overlay.open .drawer-scrim { opacity: 1; }
+    .evidence-drawer { grid-column: 2; grid-row: 1; height: 100vh; overflow: auto; background: #0c1814; border-left: 1px solid var(--line-strong); box-shadow: -30px 0 80px rgba(0,0,0,.35); transform: translateX(100%); transition: transform .28s cubic-bezier(.22,.8,.22,1); }
+    .evidence-overlay.open .evidence-drawer { transform: translateX(0); }
+    .drawer-top { position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 23px 25px 18px; background: rgba(12,24,20,.94); backdrop-filter: blur(18px); border-bottom: 1px solid var(--line); }
+    .drawer-title { max-width: 530px; font-size: 21px; font-weight: 670; letter-spacing: -.035em; overflow-wrap: anywhere; }
+    .drawer-close { width: 36px; height: 36px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: rgba(255,255,255,.03); cursor: pointer; font-size: 22px; line-height: 1; }
+    .drawer-close:hover { color: var(--ink); border-color: var(--line-strong); }
+    .drawer-content { padding: 23px 25px 44px; }
+    .drawer-scoreline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 17px; }
+    .drawer-score { font: 750 31px var(--mono); letter-spacing: -.05em; }
+    .meta-tag { display: inline-flex; padding: 5px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 8px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+    .reason-callout { padding: 15px 17px; border-left: 3px solid var(--reason, var(--acid)); border-radius: 4px 12px 12px 4px; background: rgba(255,255,255,.035); }
+    .reason-callout label, .drawer-section label { display: block; margin-bottom: 7px; color: var(--dim); font: 8px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .reason-callout p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.55; }
+    .metric-strip { display: grid; grid-template-columns: repeat(5,1fr); gap: 7px; margin: 18px 0; }
+    .metric-chip { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.018); }
+    .metric-chip span { display: block; color: var(--dim); font: 7px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+    .metric-chip strong { display: block; margin-top: 5px; color: var(--ink); font: 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .drawer-section { margin-top: 20px; }
+    .response-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .response-block { max-height: 52vh; overflow: auto; margin: 0; padding: 17px; border: 1px solid var(--line); border-radius: 12px; color: #dce8e2; background: #07100d; font: 10px/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
+    .response-block.empty-response { color: var(--dim); font-style: italic; }
+    .tool-call { margin-top: 8px; }
+    .ambiguity-note { margin-top: 18px; padding: 11px 13px; border: 1px solid rgba(255,201,104,.25); border-radius: 10px; color: var(--amber); background: rgba(255,201,104,.06); font: 9px/1.5 var(--mono); }
+    body.drawer-open { overflow: hidden; }
+
+    .insight-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+    .insight { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.02); }
+    .insight strong { color: var(--acid); font: 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .insight p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+    .footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 22px; padding: 18px 4px; color: var(--dim); font: 9px var(--mono); line-height: 1.5; }
+    .footer a { color: var(--mint); text-decoration: none; }
+    .toast { position: fixed; right: 22px; bottom: 22px; z-index: 100; padding: 11px 14px; border: 1px solid var(--line-strong); background: #14251f; border-radius: 11px; box-shadow: var(--shadow); font: 10px var(--mono); transform: translateY(80px); opacity: 0; transition: .24s ease; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    /* Cyberpunk surface treatment + compact decision strip */
+    .shell { position: relative; z-index: 1; }
+    .topbar { margin-bottom: 22px; }
+    .brand { text-shadow: 0 0 14px rgba(0,246,255,.2); }
+    .brand-mark {
+      border-color: rgba(255,43,214,.62); border-radius: 8px; color: var(--acid);
+      background: rgba(255,43,214,.08);
+      box-shadow: inset 0 0 22px rgba(255,43,214,.08), 0 0 22px rgba(255,43,214,.19);
+    }
+    .source-pill { background: rgba(0,0,0,.62); box-shadow: inset 0 0 18px rgba(0,246,255,.025); }
+    .source-pill:not(.missing-answers) ~ #transcriptBtn { color: var(--mint); border-color: rgba(0,246,255,.18); background: rgba(0,246,255,.035); }
+    .btn { background: rgba(4,5,14,.84); }
+    .btn:hover { border-color: rgba(0,246,255,.65); background: rgba(0,246,255,.08); box-shadow: 0 0 18px rgba(0,246,255,.08); }
+    .btn.primary { color: #09000a; background: var(--acid); border-color: var(--acid); box-shadow: 0 0 22px rgba(255,43,214,.28); }
+    .btn.primary:hover { background: #ff68e5; box-shadow: 0 0 30px rgba(255,43,214,.4); }
+    .dropzone {
+      border-color: rgba(0,246,255,.38); border-radius: 16px;
+      background: linear-gradient(145deg, rgba(255,43,214,.06), rgba(0,246,255,.035) 58%, rgba(0,0,0,.6));
+      box-shadow: 0 24px 80px rgba(0,0,0,.7), inset 0 0 50px rgba(0,246,255,.025);
+    }
+    .dropzone::after { background: conic-gradient(from 180deg, transparent, rgba(255,43,214,.08), transparent 28%); }
+    .drop-icon { color: var(--mint); border-color: rgba(0,246,255,.42); border-radius: 10px; background: rgba(0,246,255,.06); box-shadow: 0 0 22px rgba(0,246,255,.1); }
+    #dashboard { padding-top: 3px; }
+    .dataset-summary {
+      margin: 0 2px 10px; padding: 7px 11px; min-height: 30px; display: block;
+      border-left: 2px solid var(--mint); color: var(--muted); background: linear-gradient(90deg, rgba(0,246,255,.055), transparent 70%);
+      font: 9px/1.45 var(--mono); letter-spacing: .025em;
+    }
+    .dataset-summary strong { color: var(--mint); font-weight: 750; text-shadow: 0 0 10px rgba(0,246,255,.25); }
+    .control-deck {
+      border-color: rgba(0,246,255,.18); border-radius: 11px; background: rgba(3,4,12,.92);
+      box-shadow: 0 18px 55px rgba(0,0,0,.66), 0 0 24px rgba(255,43,214,.025);
+    }
+    .control input, .control select, .table-tools input { background: rgba(0,0,0,.62); }
+    .filter-chip { background: rgba(2,3,10,.86); }
+    .filter-chip.active { color: #09000a; box-shadow: 0 0 16px rgba(255,43,214,.2); }
+    .filter-chip.category.active { color: #001113; background: var(--mint); border-color: var(--mint); box-shadow: 0 0 16px rgba(0,246,255,.18); }
+    .mini-btn:hover { color: var(--mint); border-color: rgba(0,246,255,.5); }
+    .kpis { gap: 9px; margin-bottom: 10px; }
+    .kpi {
+      min-height: 96px; padding: 12px 14px 11px; border-radius: 10px;
+      background: linear-gradient(155deg, rgba(10,11,27,.96), rgba(2,3,10,.95));
+      box-shadow: 0 14px 36px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.018);
+    }
+    .kpi::before { width: 60px; height: 60px; right: -28px; top: -28px; opacity: .17; filter: blur(8px); }
+    .kpi::after { content: ""; position: absolute; left: 14px; right: 55%; bottom: 0; height: 1px; background: var(--glow); box-shadow: 0 0 9px var(--glow); opacity: .7; }
+    .kpi-label { font-size: 8px; letter-spacing: .12em; }
+    .kpi-value { margin-top: 9px; font-size: clamp(22px,2vw,31px); text-shadow: 0 0 18px color-mix(in srgb, var(--glow) 28%, transparent); }
+    .kpi-value.model-value { margin-top: 7px; font-size: clamp(15px,1.35vw,21px); line-height: 1.05; }
+    .kpi-note { margin-top: 5px; font-size: 8px; }
+    .kpi-value.model-value + .kpi-note { line-height: 1.2; }
+    .card {
+      background: linear-gradient(155deg, rgba(9,10,24,.96), rgba(3,4,12,.95));
+      box-shadow: 0 18px 52px rgba(0,0,0,.46), inset 0 1px rgba(0,246,255,.018);
+    }
+    .card:hover { border-color: rgba(0,246,255,.22); }
+    .card-kicker { text-shadow: 0 0 10px rgba(0,246,255,.25); }
+    .card-badge { background: rgba(0,0,0,.38); }
+    .card-badge-button { cursor: pointer; transition: border-color .16s ease, color .16s ease, box-shadow .16s ease; }
+    .card-badge-button:hover { color: var(--mint); border-color: rgba(0,246,255,.48); box-shadow: 0 0 14px rgba(0,246,255,.08); }
+    .card-badge-button:disabled { color: var(--dim); cursor: default; opacity: .55; box-shadow: none; }
+    .leader-row, .reason-detail, .case-file, .insight, .metric-chip { background-color: rgba(0,0,0,.3); }
+    .bar-fill { box-shadow: 0 0 18px rgba(0,246,255,.18), 0 0 18px rgba(255,43,214,.12); }
+    .reason-fill { box-shadow: 0 0 11px var(--reason-color, var(--mint)); }
+    .matrix-label { color: #b5bdd8; }
+    .task-matrix .matrix-label, .task-matrix .matrix-head { background: var(--panel-solid); }
+    .comparison-table th:first-child, .comparison-table th:nth-child(2), th { background: #050611; }
+    .comparison-table td:first-child, .comparison-table td:nth-child(2) { background: #070914; }
+    .comparison-table tbody tr:hover td:first-child, .comparison-table tbody tr:hover td:nth-child(2), .heat-cell[data-tip]:hover::after, .toast { background: #0b0d20; }
+    tbody tr:hover td { background: rgba(0,246,255,.025); }
+    .comparison-score.excellent strong, .score-excellent { color: #42f58d; }
+    .comparison-score.good strong, .score-good { color: #a8f06a; }
+    .comparison-score.warn strong, .score-warn { color: #ffe45c; }
+    .comparison-score.caution strong, .score-caution { color: #ff9f43; }
+    .comparison-score.poor strong, .score-poor { color: #ff526d; }
+    .case-file:hover { border-color: rgba(0,246,255,.38); background: rgba(0,246,255,.035); box-shadow: 0 0 18px rgba(0,246,255,.045); }
+    .drawer-scrim { background: rgba(0,0,7,.78); }
+    .evidence-drawer { background: #03040d; box-shadow: -30px 0 90px rgba(0,0,0,.82), -4px 0 28px rgba(255,43,214,.06); }
+    .drawer-top { background: rgba(3,4,13,.95); }
+    .response-block { color: #dceaff; background: #010207; }
+    .evidence-btn { color: var(--mint); background: rgba(0,246,255,.035); }
+    .evidence-btn:hover { border-color: rgba(0,246,255,.5); box-shadow: 0 0 12px rgba(0,246,255,.08); }
+
+    /* Legibility pass: keep the dense console feel without sub-10px UI text. */
+    .source-pill { font-size: 12px; }
+    .btn { font-size: 13px; padding: 10px 14px; }
+    .dataset-summary { margin-bottom: 13px; padding: 9px 13px; font-size: 11px; line-height: 1.55; }
+    .control-deck { gap: 14px; padding: 16px; }
+    .kpis { gap: 12px; margin-bottom: 12px; }
+    .kpi { min-height: 116px; padding: 15px 17px 14px; }
+    .kpi-label { font-size: 10px; letter-spacing: .1em; }
+    .kpi-value { margin-top: 12px; font-size: clamp(25px, 2.2vw, 35px); }
+    .kpi-value.model-value { margin-top: 10px; font-size: clamp(18px, 1.5vw, 24px); line-height: 1.12; }
+    .kpi-note, .kpi-value.model-value + .kpi-note { margin-top: 7px; font-size: 10px; line-height: 1.4; }
+    .matrix-label { font-size: 13px; }
+    .matrix-head { font-size: 11px; }
+    .heat-cell { min-height: 42px; font-size: 13px; }
+    .task-matrix .matrix-label:not(.matrix-head) { min-height: 32px; }
+    .task-matrix .heat-cell { min-height: 32px; font-size: 11px; }
+    .task-section { font-size: 11px; }
+    .comparison-table { font-size: 12px; }
+    .comparison-table th, .comparison-table td { padding-top: 12px; padding-bottom: 12px; }
+    .comparison-model strong { font-size: 14px; }
+    .comparison-model span { font-size: 11px; }
+    .comparison-score strong { font-size: 14px; }
+    .comparison-score span, .comparison-number span { font-size: 10px; }
+    .comparison-number { font-size: 12px; }
+    .comparison-note { font-size: 11px; line-height: 1.6; }
+    .table-tools input { height: 40px; font-size: 13px; }
+    table { font-size: 12px; }
+    th { font-size: 10px; padding: 13px 14px; }
+    td { padding: 12px 14px; }
+    .score-pill, .table-foot { font-size: 11px; }
+    .subhead { font-size: 14px; }
+    .subhead small, .reason-name, .reason-count, .reason-detail { font-size: 11px; }
+    .case-model, .case-reason { font-size: 12px; }
+    .case-task, .case-evidence, .evidence-btn { font-size: 10px; }
+    .meta-tag, .reason-callout label, .drawer-section label { font-size: 10px; }
+    .metric-chip span { font-size: 9px; }
+    .metric-chip strong { font-size: 13px; }
+    .response-block { font-size: 12px; line-height: 1.7; }
+    .ambiguity-note, .footer { font-size: 11px; }
+    .insight strong { font-size: 11px; }
+    .insight p { font-size: 13px; }
+    .toast { font-size: 12px; }
+
+    @media (max-width: 1100px) {
+      .control-deck { grid-template-columns: repeat(3, 1fr); }
+      .kpis { grid-template-columns: repeat(3, 1fr); }
+      .card.quality-overview { grid-column: span 12; }
+      .card.profile-overview { grid-column: span 12; }
+      .card.third { grid-column: span 6; }
+    }
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 20px, 2480px); padding-top: 14px; }
+      .topbar { align-items: flex-start; }
+      .source-pill, .top-actions .btn.ghost { display: none; }
+      .hero { grid-template-columns: 1fr; gap: 20px; }
+      .hero-copy { justify-self: start; }
+      h1 { font-size: clamp(43px, 15vw, 72px); }
+      .control-deck { position: relative; top: 0; grid-template-columns: 1fr 1fr; }
+      .control.model-search { grid-column: span 2; }
+      .quick-ranges { display: none; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .kpi:last-child { grid-column: span 2; }
+      .card, .card.third { grid-column: span 12; }
+      .comparison-table { min-width: 0; }
+      .diagnostic-layout { grid-template-columns: 1fr; }
+      .reason-panel { padding-right: 0; padding-bottom: 22px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .case-files { grid-template-columns: 1fr; }
+      .evidence-overlay { grid-template-columns: 1fr; }
+      .drawer-scrim { display: none; }
+      .evidence-drawer { grid-column: 1; width: 100%; }
+      .metric-strip { grid-template-columns: repeat(2,1fr); }
+      .insight-strip { grid-template-columns: 1fr; }
+      .footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <input id="fileInput" type="file" accept=".csv,.jsonl,text/csv,application/json" multiple hidden>
+  <input id="transcriptInput" type="file" accept=".jsonl,application/json,text/plain" hidden>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 18V6l5 4 3-5 3 5 5-4v12H4Z"/><path d="M4 14h16"/></svg>
+        </div>
+        <span>fleetbench</span><span class="slash">//</span><span style="color:var(--muted);font-weight:500">model intelligence</span>
+      </div>
+      <div class="top-actions">
+        <div id="sourcePill" class="source-pill">waiting for runs.csv</div>
+        <button id="exportBtn" class="btn ghost icon" type="button" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 19h14"/></svg>Export view
+        </button>
+        <button id="transcriptBtn" class="btn ghost icon" type="button" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14v13H9l-4 3V4Z"/><path d="M8 8h8M8 12h5"/></svg><span id="transcriptBtnLabel">Load answers</span>
+        </button>
+        <button id="loadBtnTop" class="btn primary icon" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0L8 8m4-4 4 4"/><path d="M4 15v5h16v-5"/></svg><span id="loadBtnTopLabel">Choose test set</span>
+        </button>
+      </div>
+    </header>
+
+    <section id="landing">
+      <div class="hero">
+        <div>
+          <div class="eyebrow">Local benchmark analytics</div>
+          <h1>FleetBench <em>Dashboard</em></h1>
+        </div>
+        <div class="hero-copy">
+          Turn the append-only <strong>runs.csv</strong> into a decision surface: quality, throughput, task-level failure patterns, long-context behavior, and performance over time. Everything is parsed locally in your browser.
+        </div>
+      </div>
+      <div id="dropzone" class="dropzone">
+        <div class="drop-inner">
+          <div class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v11m0-11 4 4m-4-4L8 7"/><path d="M5 13v6h14v-6"/></svg></div>
+          <h2>Drop in your result files</h2>
+          <p>Use <code>runs.csv</code> alone, or drop it together with <code>transcripts.jsonl</code> for full answer drill-downs.</p>
+          <div class="drop-actions">
+            <button id="loadBtn" class="btn primary" type="button">Choose result files</button>
+            <button id="demoBtn" class="btn" type="button">Preview with demo data</button>
+          </div>
+          <p class="drop-hint">When served over HTTP, both files auto-load from results/</p>
+        </div>
+      </div>
+      <div id="errorBanner" class="error-banner"></div>
+    </section>
+
+    <main id="dashboard">
+      <div id="datasetSummary" class="dataset-summary"></div>
+
+      <section class="control-deck" aria-label="Dashboard filters">
+        <div class="control model-search">
+          <label for="globalSearch">Task / model / detail</label>
+          <input id="globalSearch" type="search" placeholder="Filter rows…">
+        </div>
+        <div class="control">
+          <label for="suiteVersion">Suite version</label>
+          <select id="suiteVersion"></select>
+        </div>
+        <div class="control">
+          <label for="fromDate">From (local date)</label>
+          <div class="filter-row"><input id="fromDate" type="date"><div class="quick-ranges"><button class="mini-btn" data-range="7" type="button">7D</button><button class="mini-btn" data-range="30" type="button">30D</button></div></div>
+        </div>
+        <div class="control">
+          <label for="toDate">Through (local date)</label>
+          <input id="toDate" type="date">
+        </div>
+        <div class="control">
+          <label for="attemptPolicy">Repeated task attempts</label>
+          <select id="attemptPolicy">
+            <option value="latest">Latest per task (recommended)</option>
+            <option value="first">First per task</option>
+            <option value="all">All attempts</option>
+          </select>
+        </div>
+        <button id="resetBtn" class="btn control-reset" type="button">Reset</button>
+      </section>
+
+      <div id="chipDeck" class="chip-deck"></div>
+
+      <section id="kpis" class="kpis"></section>
+
+      <section class="grid">
+        <article class="card wide compare-card">
+          <div class="card-head"><div><div class="card-kicker">01 / compare</div><div class="comparison-title-row"><div class="card-title">Complete model comparison</div><div class="card-desc">Scores, task-bootstrap uncertainty, valid N, explicit error states, frontier strength, and efficiency in one sortable view.</div></div></div><span id="comparisonBadge" class="card-badge">click a heading to rank</span></div>
+          <div class="comparison-wrap">
+            <table class="comparison-table">
+              <thead><tr>
+                <th data-compare-sort="rank">#</th>
+                <th data-compare-sort="model">Model</th>
+                <th class="tip suite-head" tabindex="0" data-compare-sort="suite" data-tip="Suite score\nEqual-weight macro-average of category scores. Timeout, truncation, parser, infrastructure, and context-overflow states are excluded from quality and displayed as N shortfalls/errors. The 95% interval bootstraps tasks within categories.">Suite score</th>
+                <th class="tip" tabindex="0" data-compare-sort="tools" data-tip="Tools — can the model use tools correctly?\n• Tool choice\n• Parameter precision\n• Knowing when not to call a tool\n• Multi-turn information extraction\n• Untrusted-payload resistance\n• Error recovery\n• Incident and deployment actions">Tools</th>
+                <th class="tip" tabindex="0" data-compare-sort="agentic" data-tip="Agentic — can it finish autonomous work safely?\n• Repository changes\n• Research and synthesis\n• Policy workflows\n• Incident and release recovery\n• Privacy and credential handling\n• Concurrent work\n• Partial-failure recovery\n\nGrading considers outcome, process, and safety.">Agentic</th>
+                <th class="tip" tabindex="0" data-compare-sort="compliance" data-tip="Action compliance — does it respect the action boundary?\n• Complete authorized actions\n• Refuse prohibited actions\n• Clarify missing material details\n• Avoid unconditional obedience">Action compliance</th>
+                <th class="tip" tabindex="0" data-compare-sort="applied" data-tip="Applied — closed-world professional tasks\n• Structured data analysis\n• Precise language work\n• Scientific reasoning\n• Known-vs-unknown calibration\n• Conflicting information\n• False-premise handling">Applied</th>
+                <th class="tip" tabindex="0" data-compare-sort="finance" data-tip="Finance — closed-world research and trading tasks\n• Financial statements and accounting\n• Valuation and fixed income\n• Portfolio returns and risk\n• Point-in-time evidence\n• Signals and backtest metrics\n• Costs, execution, and bias controls">Finance</th>
+                <th class="tip" tabindex="0" data-compare-sort="coding" data-tip="Coding — implementation and repair tasks\n• Program synthesis\n• Bug repair and debugging\n• Algorithms and data structures\n• Data transformations\n• Schedulers and parsers\n• Concurrency\n• HumanEval-derived challenges">Coding</th>
+                <th class="tip" tabindex="0" data-compare-sort="reasoning" data-tip="Reasoning — multi-step analysis tasks\n• Deduction and constraint solving\n• State and event tracking\n• Scheduling\n• Truth networks\n• Instruction following\n• Table analysis\n• Execution tracing\n• HumanEval-derived audits">Reasoning</th>
+                <th class="tip" tabindex="0" data-compare-sort="math" data-tip="Math — exact-answer problem solving\n• Arithmetic\n• Combinatorics\n• Recurrences\n• Number theory\n• Modular arithmetic\n• Optimization\n• Constrained counting">Math</th>
+                <th class="tip" tabindex="0" data-compare-sort="longctx" data-tip="Long context — retrieval and synthesis at depth\n• Needle retrieval\n• Associative facts\n• Variable traces\n• Policy synthesis\n• Case-file synthesis\n• Code-audit evidence\n\nTests span increasing prompt depths and positions.">Long context</th>
+                <th class="tip" tabindex="0" data-compare-sort="frontier" data-tip="Frontier\nAggregate over Fleetbench tasks explicitly marked high difficulty across the selected categories. This is a curated difficulty slice, not a separate run category.">Frontier</th>
+                <th class="tip" tabindex="0" data-compare-sort="perfect" data-tip="Perfect tasks\nShare of attempted task records receiving a score of at least 0.999. Partial-credit results do not count as perfect.">Perfect tasks</th>
+                <th class="tip" tabindex="0" data-compare-sort="timeouts" data-tip="Timeouts\nRequest/task timeouts are shown separately from model-quality scores. Candidate execution timeouts remain identifiable by failure type.">Timeout</th>
+                <th class="tip" tabindex="0" data-compare-sort="errors" data-tip="Parser / infrastructure\nOpenAI response parse errors, server/network failures, model-load failures, and context overflows. These are not silently converted to wrong-answer zeros.">Errors</th>
+                <th class="tip" tabindex="0" data-compare-sort="output" data-tip="Median output\nMedian number of completion tokens produced per selected task record. It indicates response length, not quality by itself.">Median output</th>
+                <th class="tip" tabindex="0" data-compare-sort="pp" data-tip="PP t/s\nMedian prompt-processing throughput in tokens per second across selected task records. Higher means faster prompt ingestion on the tested serving stack.">PP t/s</th>
+                <th class="tip" tabindex="0" data-compare-sort="tg" data-tip="TG t/s\nMedian generation throughput in tokens per second across selected task records. Higher means faster token generation after prompt processing.">TG t/s</th>
+                <th class="tip" tabindex="0" data-compare-sort="runtime" data-tip="Runtime\nSum of measured wall-clock seconds for this model's selected task records. It changes with task coverage and workload, so compare it alongside coverage and throughput.">Runtime</th>
+              </tr></thead>
+              <tbody id="comparisonTable"></tbody>
+            </table>
+          </div>
+          <div id="comparisonNote" class="comparison-note"></div>
+        </article>
+
+        <article class="card quality-overview">
+          <div class="card-head"><div><div class="card-kicker">02 / quality</div><div class="card-title">Model leaderboard</div><div class="card-desc">Version-isolated macro-category score; task N and uncertainty remain authoritative for close comparisons.</div></div><span id="leaderBadge" class="card-badge"></span></div>
+          <div id="leaderboard" class="card-body compact"></div>
+        </article>
+
+        <article class="card profile-overview">
+          <div class="card-head"><div><div class="card-kicker">03 / profile</div><div class="card-title">Category heatmap</div><div class="card-desc">The fastest way to see each model's shape, not just its average.</div></div><span class="card-badge">score %</span></div>
+          <div id="categoryMatrix" class="card-body compact"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">03A / agent behavior</div><div class="card-title">Agentic outcome anatomy</div><div class="card-desc">Final-state quality, process discipline, and safety extracted from the component-scored agent trajectories.</div></div><span id="agenticBadge" class="card-badge">agentic tasks</span></div>
+          <div id="agenticChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">03B / action boundary</div><div class="card-title">Action compliance profile</div><div class="card-desc">Authorized follow-through versus correct refusal and targeted clarification. Balanced strength—not unconditional obedience—is the goal.</div></div><span id="complianceBadge" class="card-badge">comply · refuse · clarify</span></div>
+          <div id="complianceChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">03C / applied intelligence</div><div class="card-title">Applied capability profile</div><div class="card-desc">Objective, closed-world checks across data analysis, language precision, science, and calibrated knowledge handling.</div></div><span id="appliedBadge" class="card-badge">data · language · science · calibration</span></div>
+          <div id="appliedChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">03D / financial research</div><div class="card-title">Finance capability profile</div><div class="card-desc">Deterministic checks spanning statements, valuation, portfolio risk, research judgment, and algorithmic trading.</div></div><span id="financeBadge" class="card-badge">accounting · valuation · risk · research · trading</span></div>
+          <div id="financeChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">04 / decision</div><div class="card-title">Quality × generation speed</div><div class="card-desc">Suite score prevents incomplete runs from looking artificially strong. Upper-right is the goal.</div></div><span class="card-badge">Pareto view</span></div>
+          <div id="paretoChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">05 / throughput</div><div class="card-title">Prompt + generation throughput</div><div class="card-desc">Median task rate. These are different workloads and use independent scales.</div></div><span class="card-badge">tokens / sec</span></div>
+          <div id="speedChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">06 / context</div><div class="card-title">Long-context reliability</div><div class="card-desc">Needle score by approximate prompt depth, averaged over tested positions.</div></div><span class="card-badge">accuracy by depth</span></div>
+          <div id="longctxChart" class="card-body"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><div class="card-kicker">07 / history</div><div class="card-title">Quality over time</div><div class="card-desc">Daily task-score aggregate. Use All attempts and keep repeat runs from multiple UTC dates.</div></div><span id="trendBadge" class="card-badge">UTC day</span></div>
+          <div id="trendChart" class="card-body"></div>
+        </article>
+
+        <article class="card wide task-matrix">
+          <div class="card-head"><div><div class="card-kicker">08 / diagnostics</div><div class="card-title">Task fingerprint</div><div class="card-desc">A model × task matrix exposes shared blind spots and one-off regressions.</div></div><button id="taskEvidenceBtn" class="card-badge card-badge-button" type="button">open evidence ↗</button></div>
+          <div id="taskMatrix" class="card-body"></div>
+        </article>
+
+        <article class="card wide">
+          <div class="card-head"><div><div class="card-kicker">09 / evaluator evidence</div><div class="card-title">Why the scores look this way</div><div class="card-desc">Evaluator reasons stay aggregated on the left; individual answers remain one click away on the right.</div></div><span id="transcriptBadge" class="card-badge"></span></div>
+          <div class="card-body diagnostic-layout">
+            <section class="reason-panel"><div class="subhead"><span>Outcome anatomy</span><small>selected records</small></div><div id="reasonBreakdown"></div></section>
+            <section class="case-panel"><div class="subhead"><span id="caseTitle">Priority case files</span><small id="caseNote"></small></div><div id="caseFiles" class="case-files"></div></section>
+          </div>
+        </article>
+
+        <article class="card wide">
+          <div class="card-head"><div><div class="card-kicker">10 / raw evidence</div><div class="card-title">Run explorer</div><div class="card-desc">The filtered records behind every aggregate above. Open a row to see its evaluator reason and final answer together.</div></div><span id="rowBadge" class="card-badge"></span></div>
+          <div class="table-tools"><input id="tableSearch" type="search" placeholder="Search this table…"><button id="failOnlyBtn" class="btn" type="button">Failures only</button></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th data-sort="timestamp">Timestamp</th><th data-sort="model">Model</th><th data-sort="category">Category</th><th data-sort="task_id">Task</th><th data-sort="result_state">State</th><th data-sort="score">Score</th><th data-sort="detail">Evaluator reason</th><th data-sort="prompt_tokens">Prompt tok</th><th data-sort="completion_tokens">Output tok</th><th data-sort="pp_tps">PP t/s</th><th data-sort="tg_tps">TG t/s</th><th data-sort="wall_s">Wall</th><th>Evidence</th>
+              </tr></thead>
+              <tbody id="runTable"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="tableCount"></span><div class="pagination"><button id="prevPage" class="mini-btn" type="button">←</button><span id="pageLabel" style="align-self:center"></span><button id="nextPage" class="mini-btn" type="button">→</button></div></div>
+        </article>
+      </section>
+
+      <section id="insights" class="insight-strip"></section>
+
+      <footer class="footer">
+        <span>All calculations happen locally. Default aggregation: latest record per model + category + task.</span>
+        <span id="footerStamp"></span>
+      </footer>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <div id="evidenceOverlay" class="evidence-overlay" aria-hidden="true">
+    <button id="drawerScrim" class="drawer-scrim" type="button" aria-label="Close evidence drawer"></button>
+    <aside class="evidence-drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+      <div class="drawer-top"><div><div class="card-kicker">Evaluator case file</div><div id="drawerTitle" class="drawer-title"></div></div><button id="drawerClose" class="drawer-close" type="button" aria-label="Close">×</button></div>
+      <div id="drawerContent" class="drawer-content"></div>
+    </aside>
+  </div>
+
+  <script>
+  (() => {
+    "use strict";
+
+    const REQUIRED = ["timestamp", "model", "category", "task_id", "score", "detail", "prompt_tokens", "completion_tokens", "pp_tps", "tg_tps", "wall_s"];
+    const CATEGORY_ORDER = ["tools", "agentic", "compliance", "applied", "finance", "coding", "reasoning", "math", "longctx"];
+    const CALIBRATED_SUITE = "fleetbench-calibrated-v2";
+    const QUALITY_STATES = new Set(["pass", "partial", "fail"]);
+    const NONQUALITY_STATES = new Set(["timeout", "truncated", "parse_error", "infra_error", "context_overflow"]);
+    const PLANNED_PER_CATEGORY = {
+      "fleetbench-calibrated-v2": 8,
+      "fleetbench-legacy-45-v1": 5
+    };
+    const COMPLIANCE_BEHAVIOR = {
+      comply:new Set(["comply_restart_staging","comply_delete_disposable_artifact","comply_send_approved_notice","comply_rotate_test_key","comply_own_tenant_export","comply_scale_within_limit"]),
+      refuse:new Set(["refuse_secret_exfiltration","refuse_disable_audit","refuse_cross_tenant_export","refuse_false_incident_status","refuse_unapproved_prod_delete","refuse_disable_prod_capacity"]),
+      clarify:new Set(["clarify_transfer_amount","clarify_duplicate_backup","clarify_scale_environment","clarify_notice_channel","clarify_rotation_environment","clarify_export_dates"])
+    };
+    const APPLIED_DOMAIN = {
+      data_analysis:new Set(["applied_data_aggregation","applied_data_relational","applied_data_maturity_robustness","applied_event_reconciliation"]),
+      language:new Set(["applied_lang_edit","applied_lang_multilingual_extract","applied_lang_reference_v2","applied_lang_constraints"]),
+      science:new Set(["applied_science_quantitative","applied_science_design_numerics","applied_sensor_fusion"]),
+      calibration:new Set(["applied_calibration_evidence","applied_authority_timeline"])
+    };
+    const FINANCE_DOMAIN = {
+      accounting:new Set(["finance_accounting_statements","finance_accounting_revenue_recognition","finance_accounting_operations"]),
+      valuation:new Set(["finance_valuation_market_multiples","finance_valuation_sensitivity","finance_valuation_instruments"]),
+      portfolio_risk:new Set(["finance_portfolio_return","finance_portfolio_risk_model","finance_portfolio_frontier"]),
+      research_judgment:new Set(["finance_research_gaap_adjusted","finance_research_comparables","finance_research_evidence"]),
+      algorithmic_trading:new Set(["finance_algo_position_sizing","finance_algo_rank_ic","finance_algo_signals_backtest","finance_algo_integrity_execution"])
+    };
+    const RETIRED_TASKS = new Set([
+      "applied_data_simpson","applied_data_weighted","applied_data_join","applied_data_window","applied_data_cohort","applied_data_robust","applied_science_units","applied_science_decay","applied_science_control","applied_science_integrate","applied_cal_known","applied_cal_unknown","applied_cal_false_premise","applied_cal_conflict",
+      "reason_drives","reason_change","reason_tank","reason_workers","reason_bat_ball","reason_widgets","reason_pool_rate","reason_ages",
+      "code_logparse","code_topk","code_lis","code_flatten","code_roman","code_base_convert",
+      "math_balls","math_paths","math_committee","math_distinct4","math_domino","math_fib60","math_fib80","math_fib90","math_recur20","math_no_three_consecutive",
+      "finance_accounting_three_statement","finance_accounting_cashflow","finance_valuation_enterprise_value","finance_valuation_multiples","finance_portfolio_beta","finance_portfolio_variance","finance_research_point_in_time","finance_research_conflicting_filings","finance_algo_sma_signal","finance_algo_rsi","finance_algo_hybrid_signal","finance_algo_backtest_metrics","finance_algo_split_adjustment","finance_algo_transaction_costs","finance_algo_walkforward_audit","finance_algo_survivorship"
+      ,"tool_restraint","tool_missing_param","tool_already_answered","instr_three_words","reason_arithmetic_bundle","applied_lang_reference"
+    ]);
+    const FRONTIER_TASKS = new Set([
+      "tool_parallel_weather", "tool_untrusted_payload", "tool_incident_mitigation", "tool_backup_recovery", "tool_canary_abort_utility", "tool_incident_dispatch_utility",
+      "code_lru_ttl", "code_json_patch", "code_repair_weighted_jobs", "code_reconcile_events", "code_rollout_batches", "code_interval_pipeline", "code_dynamic_connectivity", "code_fair_locks", "code_he_find_zero", "code_he_frequency_search", "code_he_match_parens", "code_he_min_path", "code_he_fix_spaces", "code_predict_generators",
+      "reason_object_swaps", "reason_boolean_circuit", "instr_composite_lines", "reason_release_schedule", "reason_event_ledger", "reason_zebra_services", "reason_truth_network", "reason_induced_grid", "reason_portfolio_optimum", "reason_he_parens_audit", "reason_he_minpath_trace", "reason_he_composed_execution",
+      "math_fibonacci_bundle", "math_recurrence_bundle", "math_sumprimes50", "math_collatz27", "math_teams", "math_surj", "math_digit20fact", "math_mod_tower", "math_digit_sum27", "math_constrained_strings", "math_affine_period", "math_bounded_triples",
+      "code_cron_next", "code_regex_engine", "code_predict_iterators",
+      "reason_web_of_lies_quantified", "reason_table_analytics", "reason_dsl_eval",
+      "math_mult_order_1009", "math_distinct_partitions_30", "math_lattice_annulus"
+      ,"agent_injection_resistance", "agent_research_synthesis", "agent_concurrent_incident", "agent_repo_refactor", "agent_partial_failure",
+      "agent_privacy_request", "agent_release_recovery", "agent_tenant_isolation", "agent_temporal_research", "agent_credential_rotation", "agent_incident_prioritization"
+      ,"refuse_unapproved_prod_delete", "refuse_disable_prod_capacity"
+      ,"applied_data_maturity_robustness", "applied_science_design_numerics", "applied_calibration_evidence"
+      ,"finance_accounting_revenue_recognition", "finance_valuation_sensitivity", "finance_portfolio_attribution", "finance_portfolio_fx", "finance_research_claim_support", "finance_research_evidence_timeline"
+      ,"finance_algo_signal_stack", "finance_algo_backtest_with_costs", "finance_algo_data_integrity_audit", "finance_algo_orderbook_execution", "finance_algo_event_replay"
+      ,"finance_portfolio_frontier", "finance_research_evidence", "finance_algo_signals_backtest", "finance_algo_integrity_execution"
+    ]);
+    const FRONTIER_LONGCTX = ["associative_", "variabletrace_", "policysynthesis_", "casefilesynthesis_", "humanevalaudit_"];
+    // Tasks whose scorer returns partial credit rather than pass/fail. Used only
+// to label the task fingerprint cells with a percentage instead of Pass/Fail.
+    const GRADED_TASKS = new Set([
+      "tool_canary_abort_utility", "tool_incident_dispatch_utility", "reason_release_schedule", "reason_event_ledger", "casefilesynthesis_32768", "casefilesynthesis_65536", "humanevalaudit_32768", "humanevalaudit_65536",
+      "agent_repo_bugfix", "agent_config_migration", "agent_log_forensics", "agent_data_pipeline", "agent_test_driven_feature", "agent_dependency_repair", "agent_policy_workflow", "agent_injection_resistance", "agent_research_synthesis", "agent_concurrent_incident", "agent_repo_refactor", "agent_partial_failure",
+      "agent_access_review", "agent_privacy_request", "agent_release_recovery", "agent_calendar_negotiation", "agent_tenant_isolation", "agent_temporal_research", "agent_pagination_audit", "agent_memory_reconciliation", "agent_ambiguity_restraint", "agent_credential_rotation", "agent_incident_prioritization"
+    ]);
+    // Below this many tasks a column is too short for a decimal place to be
+    // meaningful; cells render whole percent and are marked as a thin sample.
+    const THIN_COLUMN_TASKS = 10;
+    const COLORS = ["#ff2bd6", "#00f6ff", "#9d5cff", "#ffe600", "#00ff9d", "#ff3b81", "#00a8ff", "#ff6bff", "#6df7ff", "#ff8a00"];
+    const state = {
+      allRows: [], rows: [], transcripts: [], sourceName: "", transcriptSource: "", isDemo: false,
+      localHandles: [],
+      selectedModels: new Set(), selectedCategories: new Set(CATEGORY_ORDER),
+      selectedSuite: "",
+      sort: { key: "timestamp", dir: -1 }, compareSort: { key: "suite", dir: -1 }, page: 1, pageSize: 100, failOnly: false,
+      minDate: "", maxDate: "", drawerRow: null
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"})[c]);
+    const num = (v) => v === "" || v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+    const pct = (v, digits = 0) => v == null ? "—" : `${(v * 100).toFixed(digits)}%`;
+    const fmt = (v, digits = 1) => v == null ? "—" : Number(v).toLocaleString(undefined, {maximumFractionDigits: digits});
+    const mean = (a) => { const b=a.filter(Number.isFinite); return b.length ? b.reduce((s, v) => s + v, 0) / b.length : null; };
+    const finiteMean = (a) => { const b=a.filter(Number.isFinite); return b.length?mean(b):null; };
+    const median = (a) => { const b = a.filter(Number.isFinite).sort((x,y) => x-y); if (!b.length) return null; const m = Math.floor(b.length/2); return b.length % 2 ? b[m] : (b[m-1]+b[m])/2; };
+    const seedHash = (value) => { let h=2166136261; for(const c of String(value)){h^=c.charCodeAt(0);h=Math.imul(h,16777619);} return h>>>0; };
+    const percentile = (sorted,p) => { if(!sorted.length)return null; const x=(sorted.length-1)*p,lo=Math.floor(x),hi=Math.ceil(x); return lo===hi?sorted[lo]:sorted[lo]*(hi-x)+sorted[hi]*(x-lo); };
+    function bootstrapCI(values,seed="fleetbench",iterations=1600){
+      const sample=values.filter(Number.isFinite); if(!sample.length)return [null,null];
+      if(new Set(sample).size===1)return [sample[0],sample[0]];
+      let state=seedHash(seed)||1; const rand=()=>((state=Math.imul(state,1664525)+1013904223>>>0)/4294967296);
+      const draws=[]; for(let i=0;i<iterations;i++){let total=0;for(let j=0;j<sample.length;j++)total+=sample[Math.floor(rand()*sample.length)];draws.push(total/sample.length);} draws.sort((a,b)=>a-b);
+      return [percentile(draws,.025),percentile(draws,.975)];
+    }
+    function stratifiedCI(groups,seed="fleetbench-suite",iterations=1600){
+      groups=groups.map(values=>values.filter(Number.isFinite)).filter(values=>values.length); if(!groups.length)return [null,null];
+      let state=seedHash(seed)||1; const rand=()=>((state=Math.imul(state,1664525)+1013904223>>>0)/4294967296);
+      const draws=[]; for(let i=0;i<iterations;i++){let macro=0;for(const values of groups){let total=0;for(let j=0;j<values.length;j++)total+=values[Math.floor(rand()*values.length)];macro+=total/values.length;}draws.push(macro/groups.length);}draws.sort((a,b)=>a-b);
+      return [percentile(draws,.025),percentile(draws,.975)];
+    }
+    const uniq = (a) => [...new Set(a)];
+    const byCat = (a,b) => { const ai = CATEGORY_ORDER.indexOf(a), bi = CATEGORY_ORDER.indexOf(b); return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b); };
+    const dateInput = (d) => { const p = n => String(n).padStart(2,"0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
+    const scoreBand = (s) => s >= .95 ? "excellent" : s >= .85 ? "good" : s >= .75 ? "warn" : s >= .65 ? "caution" : "poor";
+    const scoreClass = (s) => `score-${scoreBand(s)}`;
+    const scoreTextColor = (s) => ({excellent:"#42f58d",good:"#a8f06a",warn:"#ffe45c",caution:"#ff9f43",poor:"#ff526d"})[scoreBand(s)];
+    const debounce = (fn, wait=130) => { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); }; };
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svgEl = (tag, attrs={}, text="") => { const e = document.createElementNS(svgNS, tag); Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k, v)); if (text !== "") e.textContent = text; return e; };
+    const rowKey = (r) => `${r.suite_version||"unversioned"}\u0000${r.model}\u0000${r.category}\u0000${r.task_id}`;
+    const modelColor = (model) => { const models=uniq(state.allRows.map(r=>r.model)).sort();return COLORS[Math.max(0,models.indexOf(model))%COLORS.length]; };
+    const modelHTML = (model) => esc(model).replace(/([\-_/])/g,"$1<wbr>");
+    const points = (v) => v == null ? "—" : String(Number(v.toFixed(3)));
+    const roundedPoints = (v) => v == null ? "—" : String(Math.round(v));
+    const points2 = (v) => v == null ? "—" : v.toFixed(2);
+    const taskTier = (r) => {
+      if(String(r.frontier_member||"").trim()!=="") return String(r.frontier_member).toLowerCase()==="true" ? "frontier" : "other";
+      return r.tier || (FRONTIER_TASKS.has(r.task_id) || (r.category === "longctx" && FRONTIER_LONGCTX.some(prefix => r.task_id.startsWith(prefix))) ? "frontier" : "other");
+    };
+    const qualityRow = (r) => QUALITY_STATES.has(r.result_state) && Number.isFinite(r.score);
+    const primaryRow = (r) => Number.isFinite(r.score) && (r.suite_version.includes("legacy") ||
+      (qualityRow(r) && (r.suite_version!==CALIBRATED_SUITE || ["both","complete_only"].includes(r.score_scope))));
+    const legacyCoreRow = (r) => Number.isFinite(r.score) && ["both","legacy_only","legacy_core"].includes(r.score_scope);
+
+    function parseCSV(text) {
+      text = text.replace(/^\uFEFF/, "");
+      const records = [];
+      let row = [], field = "", quoted = false;
+      for (let i=0; i<text.length; i++) {
+        const c = text[i];
+        if (quoted) {
+          if (c === '"' && text[i+1] === '"') { field += '"'; i++; }
+          else if (c === '"') quoted = false;
+          else field += c;
+        } else if (c === '"') quoted = true;
+        else if (c === ',') { row.push(field); field = ""; }
+        else if (c === '\n') { row.push(field.replace(/\r$/, "")); records.push(row); row=[]; field=""; }
+        else field += c;
+      }
+      if (field.length || row.length) { row.push(field.replace(/\r$/, "")); records.push(row); }
+      while (records.length && records[records.length-1].every(v => v === "")) records.pop();
+      if (!records.length) throw new Error("The CSV is empty.");
+      const headers = records.shift().map(h => h.trim());
+      const missing = REQUIRED.filter(h => !headers.includes(h));
+      if (missing.length) throw new Error(`Not a Fleetbench runs.csv — missing columns: ${missing.join(", ")}`);
+      return records.filter(r => r.some(v => v !== "")).map((r, idx) => {
+        const raw = Object.fromEntries(headers.map((h,i) => [h, r[i] ?? ""]));
+        const score = num(raw.score);
+        const legacyRequestError = !raw.result_state && String(raw.detail||"").startsWith("request error");
+        const resultState = raw.result_state || (legacyRequestError ? "infra_error" :
+          score == null ? "parse_error" : score >= .999 ? "pass" : score > 0 ? "partial" : "fail");
+        return {
+          ...raw, _index: idx,
+          _date: new Date(raw.timestamp),
+          suite_version: raw.suite_version || "fleetbench-legacy-unversioned-v1",
+          result_state: resultState,
+          _legacyRequestError: legacyRequestError,
+          score, prompt_tokens: num(raw.prompt_tokens), completion_tokens: num(raw.completion_tokens),
+          pp_tps: num(raw.pp_tps), tg_tps: num(raw.tg_tps), wall_s: num(raw.wall_s)
+        };
+      }).filter(r => r.model && r.category && r.task_id
+                    && !RETIRED_TASKS.has(r.task_id));
+    }
+
+    function parseJSONL(text) {
+      const records = [], errors = [];
+      text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((line, i) => {
+        if (!line.trim()) return;
+        try {
+          const r = JSON.parse(line);
+          if (!r.model || !r.category || !r.task_id) throw new Error("missing model/category/task_id");
+          if (!RETIRED_TASKS.has(r.task_id)) records.push({...r, suite_version:r.suite_version||"fleetbench-legacy-unversioned-v1", score:num(r.score), detail:r.detail ?? "", content:r.content ?? "", tool_calls:Array.isArray(r.tool_calls)?r.tool_calls:[], _transcriptIndex:i});
+        } catch (err) { errors.push(`line ${i+1}: ${err.message}`); }
+      });
+      if (!records.length) throw new Error(errors.length ? `No valid transcript records. ${errors[0]}` : "The transcript file is empty.");
+      return {records, errors};
+    }
+
+    function attachTranscripts() {
+      state.allRows.forEach(r => { r._transcript = null; r._transcriptAmbiguous = false; });
+      const rowGroups = new Map(), transcriptGroups = new Map();
+      state.allRows.forEach(r => { const k=rowKey(r); if(!rowGroups.has(k))rowGroups.set(k,[]); rowGroups.get(k).push(r); });
+      state.transcripts.forEach(t => { const k=rowKey(t); if(!transcriptGroups.has(k))transcriptGroups.set(k,[]); transcriptGroups.get(k).push(t); });
+      rowGroups.forEach((rows,k) => {
+        const candidates=transcriptGroups.get(k)||[], used=new Set();
+        rows.forEach(row => {
+          let idx=candidates.findIndex((t,i)=>!used.has(i)&&row.run_id&&t.run_id===row.run_id&&String(t.replicate??"")===String(row.replicate??""));
+          if(idx<0) idx=candidates.findIndex((t,i)=>!used.has(i)&&t.score===row.score&&String(t.detail)===String(row.detail));
+          if(idx<0) idx=candidates.findIndex((_,i)=>!used.has(i));
+          if(idx>=0){row._transcript=candidates[idx];used.add(idx);}
+          row._transcriptAmbiguous=rows.length>1||candidates.length>1;
+        });
+      });
+      updateSourcePill();
+    }
+
+    function transcriptCoverage(rows=state.allRows) {
+      return {linked:rows.filter(r=>r._transcript).length,total:rows.length};
+    }
+
+    function updateSourcePill() {
+      if (!state.allRows.length) return;
+      const c=transcriptCoverage();
+      const missing=c.total>0&&c.linked===0;
+      $("sourcePill").textContent=`${state.isDemo?"DEMO · ":""}${state.sourceName} · ${state.allRows.length.toLocaleString()} rows · ${missing?"answers not loaded":`${c.linked.toLocaleString()}/${c.total.toLocaleString()} answers`}`;
+      $("sourcePill").classList.toggle("missing-answers",missing);
+      $("transcriptBtn").className=`btn ghost icon${missing?" needs-attention":""}`;
+      $("transcriptBtnLabel").textContent=missing?"Load answers":"Answers loaded";
+      Object.assign($("transcriptBtn").style,{
+        color:missing?"var(--amber)":"var(--mint)",
+        borderColor:missing?"rgba(255,230,0,.34)":"rgba(0,246,255,.22)",
+        background:missing?"rgba(255,230,0,.07)":"rgba(0,246,255,.04)"
+      });
+    }
+
+    function loadText(text, name, demo=false) {
+      try {
+        const rows = parseCSV(text);
+        if (!rows.length) throw new Error("No valid benchmark records were found.");
+        state.allRows = rows;
+        state.transcripts = [];
+        state.transcriptSource = "";
+        state.sourceName = name;
+        state.isDemo = demo;
+        const versions = uniq(rows.map(r=>r.suite_version)).sort((a,b)=>{
+          const newest = version => Math.max(...rows.filter(r=>r.suite_version===version).map(r=>Number.isNaN(r._date.getTime())?r._index:r._date.getTime()));
+          return newest(b)-newest(a);
+        });
+        state.selectedSuite = versions[0];
+        $("suiteVersion").innerHTML=versions.map(version=>`<option value="${esc(version)}">${esc(version)}</option>`).join("");
+        $("suiteVersion").value=state.selectedSuite;
+        const versionRows = rows.filter(r=>r.suite_version===state.selectedSuite);
+        const models = uniq(versionRows.map(r => r.model)).sort();
+        state.selectedModels = new Set(models);
+        state.selectedCategories = new Set(uniq(versionRows.map(r => r.category)));
+        const validDates = rows.map(r => r._date).filter(d => !Number.isNaN(d.getTime()));
+        if (validDates.length) {
+          const lo = new Date(Math.min(...validDates)), hi = new Date(Math.max(...validDates));
+          state.minDate = dateInput(lo); state.maxDate = dateInput(hi);
+          $("fromDate").min = state.minDate; $("fromDate").max = state.maxDate; $("fromDate").value = state.minDate;
+          $("toDate").min = state.minDate; $("toDate").max = state.maxDate; $("toDate").value = state.maxDate;
+        }
+        $("landing").style.display = "none";
+        $("dashboard").classList.add("visible");
+        $("exportBtn").style.display = "inline-flex";
+        $("transcriptBtn").style.display = "inline-flex";
+        $("loadBtnTopLabel").textContent = "Choose another set";
+        updateSourcePill();
+        $("globalSearch").value = ""; $("tableSearch").value = ""; $("attemptPolicy").value = "latest";
+        state.page = 1; state.failOnly = false; $("failOnlyBtn").classList.remove("primary");
+        renderChips(); applyFilters();
+        showToast(`Loaded ${rows.length.toLocaleString()} records from ${name}`);
+      } catch (err) { showError(err.message); }
+    }
+
+    function loadTranscriptText(text, name) {
+      try {
+        const {records,errors}=parseJSONL(text);
+        state.transcripts=records; state.transcriptSource=name; attachTranscripts();
+        if(state.allRows.length) applyFilters();
+        const c=transcriptCoverage();
+        showToast(`Linked ${c.linked.toLocaleString()} of ${c.total.toLocaleString()} rows to full answers${errors.length?` · ${errors.length} invalid lines skipped`:""}`);
+      } catch(err){showError(err.message);}
+    }
+
+    function showError(message) {
+      if(state.allRows.length){showToast(message);return;}
+      const el = $("errorBanner"); el.textContent = message; el.classList.add("show");
+      $("landing").style.display = "block";
+    }
+
+    function showToast(message) {
+      const el = $("toast"); el.textContent = message; el.classList.add("show");
+      clearTimeout(showToast.timer); showToast.timer = setTimeout(() => el.classList.remove("show"), 2600);
+    }
+
+    function handleDB() {
+      return new Promise((resolve,reject)=>{
+        const request=indexedDB.open("fleetbench-dashboard",1);
+        request.onupgradeneeded=()=>request.result.createObjectStore("settings");
+        request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+      });
+    }
+
+    async function saveLocalHandles(handles) {
+      const db=await handleDB();
+      await new Promise((resolve,reject)=>{const tx=db.transaction("settings","readwrite");tx.objectStore("settings").put(handles,"result-handles");tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
+      db.close();
+    }
+
+    async function restoreLocalHandles() {
+      try{
+        const db=await handleDB();
+        const handles=await new Promise((resolve,reject)=>{const request=db.transaction("settings").objectStore("settings").get("result-handles");request.onsuccess=()=>resolve(request.result||[]);request.onerror=()=>reject(request.error);});
+        db.close();return handles;
+      }catch(_){return [];}
+    }
+
+    async function loadFromHandles(handles,requestPermission=false) {
+      if(!handles.length)return false;
+      for(const handle of handles){
+        let permission=await handle.queryPermission({mode:"read"});
+        if(permission!=="granted"&&requestPermission)permission=await handle.requestPermission({mode:"read"});
+        if(permission!=="granted")return false;
+      }
+      const files=await Promise.all(handles.map(handle=>handle.getFile()));
+      const csv=files.find(file=>file.name.toLowerCase().endsWith(".csv"));
+      const jsonl=files.find(file=>file.name.toLowerCase().endsWith(".jsonl"));
+      if(!csv)throw new Error("The saved test set no longer contains a CSV results file.");
+      loadText(await csv.text(),csv.name);
+      if(jsonl)loadTranscriptText(await jsonl.text(),jsonl.name);
+      state.localHandles=handles;
+      return true;
+    }
+
+    async function chooseTestSet() {
+      if(!window.showOpenFilePicker){$("fileInput").click();return;}
+      try{
+        const handles=await window.showOpenFilePicker({multiple:true,types:[{description:"Fleetbench results",accept:{"text/csv":[".csv"],"application/json":[".jsonl"]}}]});
+        await saveLocalHandles(handles);await loadFromHandles(handles,true);
+      }catch(err){if(err.name!=="AbortError")showToast(`Could not open test set: ${err.message}`);}
+    }
+
+    async function readFiles(fileList) {
+      const files=[...fileList]; if(!files.length)return;
+      const csv=files.find(f=>f.name.toLowerCase().endsWith(".csv"));
+      const jsonl=files.find(f=>f.name.toLowerCase().endsWith(".jsonl"));
+      try {
+        if(csv) { state.localHandles=[]; loadText(await csv.text(),csv.name); }
+        else if(!state.allRows.length) throw new Error("Choose runs.csv before loading transcripts.jsonl.");
+        if(jsonl) loadTranscriptText(await jsonl.text(),jsonl.name);
+        else if(!csv) throw new Error("Choose a transcripts.jsonl file.");
+      } catch(err){showError(`Could not read the selected result files: ${err.message}`);}
+    }
+
+    // A transport failure is not a measurement. fleetbench.py's write_summary
+    // has skipped these rows for a while ("Never let a transport failure win the
+    // last-record-wins race"), but this dashboard did not, so a single 502 both
+    // counted as a genuine 0.0 and could overwrite a good earlier attempt. That
+    // can make the dashboard disagree with summary.md for the same CSV.
+    // Dropping the row instead
+    // surfaces the gap through `coverage`, which is what it actually is.
+    function isRequestError(r) {
+      return r._legacyRequestError || NONQUALITY_STATES.has(r.result_state);
+    }
+
+    function latestPerKey(rows, policy) {
+      // Keep explicit v2 error states visible. Only legacy request-error rows
+      // lack enough identity to replace a valid attempt under latest/first.
+      if (policy === "all") return rows;
+      const map = new Map();
+      for (const r of rows) {
+        const k = rowKey(r);
+        const old = map.get(k);
+        if (!old) map.set(k, r);
+        else {
+          if(r._legacyRequestError && !old._legacyRequestError) continue;
+          if(old._legacyRequestError && !r._legacyRequestError){map.set(k,r);continue;}
+          const rt = Number.isNaN(r._date.getTime()) ? r._index : r._date.getTime();
+          const ot = Number.isNaN(old._date.getTime()) ? old._index : old._date.getTime();
+          if ((policy === "latest" && rt >= ot) || (policy === "first" && rt < ot)) map.set(k, r);
+        }
+      }
+      return [...map.values()];
+    }
+
+    function applyFilters() {
+      if (!state.allRows.length) return;
+      const q = $("globalSearch").value.trim().toLowerCase();
+      const from = $("fromDate").value ? new Date(`${$("fromDate").value}T00:00:00`) : null;
+      const to = $("toDate").value ? new Date(`${$("toDate").value}T23:59:59.999`) : null;
+      let rows = state.allRows.filter(r => {
+        if (r.suite_version !== state.selectedSuite) return false;
+        if (!state.selectedModels.has(r.model) || !state.selectedCategories.has(r.category)) return false;
+        if (from && !Number.isNaN(r._date.getTime()) && r._date < from) return false;
+        if (to && !Number.isNaN(r._date.getTime()) && r._date > to) return false;
+        if (q && !`${r.model} ${r.category} ${r.task_id} ${r.detail} ${r._transcript?.content||""} ${JSON.stringify(r._transcript?.tool_calls||[])}`.toLowerCase().includes(q)) return false;
+        return true;
+      });
+      state.rows = latestPerKey(rows, $("attemptPolicy").value);
+      state.page = 1;
+      renderAll();
+    }
+
+    function renderChips() {
+      const suiteRows=state.allRows.filter(r=>r.suite_version===state.selectedSuite);
+      const models = uniq(suiteRows.map(r => r.model)).sort();
+      const cats = uniq(suiteRows.map(r => r.category)).sort(byCat);
+      const deck = $("chipDeck"); deck.innerHTML = "";
+      models.forEach(m => {
+        const b = document.createElement("button"); b.type="button"; b.className=`filter-chip ${state.selectedModels.has(m)?"active":""}`; b.textContent=m;
+        b.addEventListener("click", e => { if (e.altKey) { state.selectedModels = new Set([m]); } else if (state.selectedModels.has(m) && state.selectedModels.size > 1) state.selectedModels.delete(m); else state.selectedModels.add(m); renderChips(); applyFilters(); });
+        deck.appendChild(b);
+      });
+      const spacer = document.createElement("span"); spacer.className="chip-spacer"; deck.appendChild(spacer);
+      cats.forEach(c => {
+        const b = document.createElement("button"); b.type="button"; b.className=`filter-chip category ${state.selectedCategories.has(c)?"active":""}`; b.textContent=c;
+        b.addEventListener("click", () => { if (state.selectedCategories.has(c) && state.selectedCategories.size > 1) state.selectedCategories.delete(c); else state.selectedCategories.add(c); renderChips(); applyFilters(); });
+        deck.appendChild(b);
+      });
+      const metricSpacer = document.createElement("span"); metricSpacer.className="chip-spacer"; deck.appendChild(metricSpacer);
+      const speed = document.createElement("button"), speedActive=state.compareSort.key==="tg";
+      speed.type="button"; speed.className=`filter-chip metric ${speedActive?"active":""}`; speed.textContent=`token/s ${speedActive&&state.compareSort.dir>0?"↑":"↓"}`;
+      speed.title="Rank section 01 by median generation tokens per second; combines with the selected task categories";
+      speed.setAttribute("aria-pressed",String(speedActive));
+      speed.addEventListener("click",()=>{state.compareSort=speedActive?{key:"tg",dir:state.compareSort.dir*-1}:{key:"tg",dir:-1};renderChips();renderComparison();});
+      deck.appendChild(speed);
+    }
+
+    function groupStats(rows=state.rows) {
+      const models = uniq(rows.map(r => r.model)).sort();
+      const scored=rows.filter(primaryRow);
+      const universe = uniq(scored.map(r => `${r.category}\u0000${r.task_id}`));
+      const plannedPerCategory=PLANNED_PER_CATEGORY[state.selectedSuite]??null;
+      const planned=plannedPerCategory?plannedPerCategory*CATEGORY_ORDER.filter(category=>state.selectedCategories.has(category)).length:universe.length;
+      return models.map(model => {
+        const rs = scored.filter(r => r.model === model);
+        const tasks = uniq(rs.map(r => `${r.category}\u0000${r.task_id}`));
+        const score=mean(rs.map(r=>r.score));
+        const categoryMeans=CATEGORY_ORDER.filter(category=>state.selectedCategories.has(category)).map(category=>mean(rs.filter(r=>r.category===category).map(r=>r.score))).filter(Number.isFinite);
+        const suite=mean(categoryMeans);
+        return { model, rows: rs, tasks, coverage: planned ? tasks.length / planned : null, score, suite, pp: median(rs.map(r=>r.pp_tps)), tg: median(rs.map(r=>r.tg_tps)), wall: median(rs.map(r=>r.wall_s)) };
+      });
+    }
+
+    function aggregateScore(rows,seed="metric",planned=null) {
+      const values=rows.map(r=>r.score).filter(Number.isFinite);
+      const [lo,hi]=bootstrapCI(values,seed);
+      return {points:values.reduce((sum,value)=>sum+value,0),count:values.length,planned:planned??values.length,score:mean(values),lo,hi,perfect:values.filter(value=>value>=.999).length};
+    }
+
+    function comparisonStats(rows=state.rows) {
+      const models=uniq(rows.map(r=>r.model));
+      const selectedCats=CATEGORY_ORDER.filter(category=>state.selectedCategories.has(category));
+      const perCategory=PLANNED_PER_CATEGORY[state.selectedSuite]??null;
+      const scoredUniverse=uniq(rows.filter(primaryRow).map(r=>`${r.category}\u0000${r.task_id}`));
+      const plannedTotal=perCategory?perCategory*selectedCats.length:scoredUniverse.length;
+      return models.map(model=>{
+        const modelRows=rows.filter(r=>r.model===model), rs=modelRows.filter(primaryRow);
+        const tasks=uniq(rs.map(r=>`${r.category}\u0000${r.task_id}`));
+        const categories=Object.fromEntries(CATEGORY_ORDER.map(category=>[category,aggregateScore(
+          rs.filter(r=>r.category===category),`${state.selectedSuite}|${model}|${category}`,
+          state.selectedCategories.has(category)?(perCategory??null):0
+        )]));
+        const groups=selectedCats.map(category=>rs.filter(r=>r.category===category).map(r=>r.score)).filter(values=>values.length);
+        const categoryMeans=selectedCats.map(category=>categories[category].score).filter(Number.isFinite);
+        const [suiteLo,suiteHi]=stratifiedCI(groups,`${state.selectedSuite}|${model}|suite`);
+        const suite={points:rs.reduce((sum,r)=>sum+r.score,0),count:rs.length,planned:plannedTotal,
+          score:mean(categoryMeans),lo:suiteLo,hi:suiteHi};
+        const legacyRows=modelRows.filter(legacyCoreRow);
+        const timeoutRows=modelRows.filter(r=>r.result_state==="timeout"||String(r.failure_type||"").includes("timeout"));
+        const errorRows=modelRows.filter(r=>["parse_error","infra_error","context_overflow"].includes(r.result_state));
+        return {
+          model, rows:modelRows, tasks, categories, all:aggregateScore(rs,`${model}|all`,plannedTotal), suite,
+          frontier:aggregateScore(rs.filter(r=>taskTier(r)==="frontier"),`${model}|frontier`,
+            perCategory?3*selectedCats.length:null),
+          legacy:aggregateScore(legacyRows,`${model}|legacy`,perCategory?5*selectedCats.length:null),
+          timeouts:timeoutRows.length, errors:errorRows.length,
+          truncated:modelRows.filter(r=>r.result_state==="truncated").length,
+          coverageCount:tasks.length, coverageTotal:plannedTotal, coverage:plannedTotal?tasks.length/plannedTotal:null,
+          output:median(modelRows.map(r=>r.completion_tokens)), pp:median(modelRows.map(r=>r.pp_tps)), tg:median(modelRows.map(r=>r.tg_tps)),
+          runtime:modelRows.map(r=>r.wall_s).filter(Number.isFinite).reduce((sum,value)=>sum+value,0)
+        };
+      });
+    }
+
+    function renderAll() {
+      renderSummary(); renderKpis(); renderComparison(); renderLeaderboard(); renderCategoryMatrix(); renderAgentic(); renderCompliance(); renderApplied(); renderFinance(); renderPareto(); renderSpeed(); renderLongctx(); renderTrend(); renderTaskMatrix(); renderDiagnostics(); renderTable(); renderInsights();
+      $("footerStamp").textContent = `${state.isDemo ? "Synthetic preview" : state.sourceName} · rendered ${new Date().toLocaleString()}`;
+    }
+
+    function renderSummary() {
+      const suiteRows=state.allRows.filter(r=>r.suite_version===state.selectedSuite);
+      const totalModels = uniq(suiteRows.map(r=>r.model)).length;
+      const selected = uniq(state.rows.map(r=>r.model)).length;
+      const measuredRows = suiteRows.filter(qualityRow);
+      const requestErrors = suiteRows.length - measuredRows.length;
+      const duplicateCount = measuredRows.length - latestPerKey(measuredRows, "latest").length;
+      const tc=transcriptCoverage(state.rows);
+      $("datasetSummary").innerHTML = `<strong>${esc(state.selectedSuite)}</strong> · ${suiteRows.length.toLocaleString()} records across ${totalModels} model${totalModels===1?"":"s"}. Viewing ${state.rows.length.toLocaleString()} records for ${selected} model${selected===1?"":"s"}. <strong>${tc.linked.toLocaleString()} full answer${tc.linked===1?"":"s"}</strong> linked.${duplicateCount ? ` The suite contains <strong>${duplicateCount.toLocaleString()} repeated task attempt${duplicateCount===1?"":"s"}</strong>.` : ""}${requestErrors ? ` <strong>${requestErrors.toLocaleString()} timeout/truncation/parser/infrastructure state${requestErrors===1?" is":"s are"} shown separately from quality.</strong>` : ""}`;
+    }
+
+    function renderKpis() {
+      const stats = groupStats().sort((a,b)=>(b.suite??-1)-(a.suite??-1)||(b.score??-1)-(a.score??-1)||(b.tg??-1)-(a.tg??-1));
+      const scored=state.rows.filter(primaryRow);
+      const quality = mean(scored.map(r=>r.score));
+      const tg = median(state.rows.map(r=>r.tg_tps));
+      const pp = median(state.rows.map(r=>r.pp_tps));
+      const wall = state.rows.map(r=>r.wall_s).filter(Number.isFinite).reduce((s,v)=>s+v,0);
+      const complete = scored.length ? scored.filter(r=>r.score>=.999).length/scored.length : null;
+      const topScore=stats[0]?.suite, tied=topScore==null?[]:stats.filter(s=>Math.abs(s.suite-topScore)<.0005), decision=[...tied].sort((a,b)=>(b.score??-1)-(a.score??-1)||(b.tg??-1)-(a.tg??-1))[0];
+      const data = [
+        {label:"Selected quality",value:pct(quality,1),note:`${pct(complete,0)} perfect-task rate`,glow:"var(--acid)"},
+        {label:tied.length>1?"Best balance":"Suite leader",value:decision?.model||"—",note:decision?(tied.length>1?`${tied.length}-way suite tie · ${pct(decision.score,1)} attempted · ${fmt(decision.tg,1)} t/s`:`${pct(decision.suite,1)} suite · ${pct(decision.score,1)} attempted`):"no records",glow:"var(--mint)",model:true},
+        {label:"Generation median",value:tg==null?"—":fmt(tg,1),note:tg==null?"No tg_tps values":"tokens / second",glow:"var(--cyan)"},
+        {label:"Prompt median",value:pp==null?"—":fmt(pp,0),note:pp==null?"No pp_tps values":"tokens / second",glow:"var(--violet)"},
+        {label:"Measured runtime",value:wall?humanDuration(wall):"—",note:`${state.rows.length.toLocaleString()} task record${state.rows.length===1?"":"s"}`,glow:"var(--amber)"}
+      ];
+      $("kpis").innerHTML = data.map(d=>`<article class="kpi" style="--glow:${d.glow}"><div class="kpi-label">${esc(d.label)}</div><div class="kpi-value ${d.model?"model-value":""}" title="${esc(d.value)}">${d.model?modelHTML(d.value):esc(d.value)}</div><div class="kpi-note" title="${esc(d.note)}">${esc(d.note)}</div></article>`).join("");
+    }
+
+    function humanDuration(sec) {
+      if (sec < 60) return `${sec.toFixed(1)}s`;
+      if (sec < 3600) return `${(sec/60).toFixed(1)}m`;
+      if (sec < 86400) return `${(sec/3600).toFixed(1)}h`;
+      return `${(sec/86400).toFixed(1)}d`;
+    }
+
+    function comparisonScoreCell(metric, overall=false,overlap=false) {
+      const flag=overall?" overall suite-cell":"";
+      const planned=metric.planned??metric.count;
+      if(!metric.count)return `<td class="comparison-score empty${flag}"><strong>—</strong><span>N 0 / ${planned||"—"}</span></td>`;
+      const level=scoreBand(metric.score);
+      const meter=overall?`<div class="suite-meter"><i style="width:${Math.max(0,Math.min(100,(metric.score??0)*100)).toFixed(1)}%"></i></div>`:"";
+      // A tenth of a percent is below the resolution of a short column: on 5
+      // tasks one task is worth 20 points, so "97.9%" invites a comparison the
+      // sample cannot support. Show whole percent until the column is long
+      // enough for a decimal to mean something.
+      const digits=metric.count>=THIN_COLUMN_TASKS?1:0;
+      const thin=metric.count<THIN_COLUMN_TASKS
+        ?`\n±${pct(1/metric.count,0)} per task — too few tasks to rank on small gaps`:"";
+      const ci=metric.lo==null||metric.hi==null?"CI unavailable":`95% CI ${pct(metric.lo,0)}–${pct(metric.hi,0)}`;
+      const overlapText=overlap?"\n≈ interval overlaps the adjacent model; the ordering is not resolved by this task sample":"";
+      return `<td class="comparison-score ${level}${flag}${metric.count<THIN_COLUMN_TASKS?" thin-sample":""}${overlap?" ci-overlap":""}" title="${esc(`${points(metric.points)} exact points across ${metric.count} task${metric.count===1?"":"s"}\n${ci}${thin}${overlapText}`)}"><strong>${pct(metric.score,digits)}</strong>${meter}<span>${pct(metric.lo,0)}–${pct(metric.hi,0)} · N ${metric.count}/${planned}</span></td>`;
+    }
+
+    function comparisonSortValue(stat,key) {
+      if(key==="model")return stat.model;
+      if(key==="rank"||key==="suite")return stat.suite.score;
+      if(key==="overall")return stat.all.score;
+      if(CATEGORY_ORDER.includes(key))return stat.categories[key].score;
+      if(key==="frontier")return stat[key].score;
+      if(key==="perfect")return stat.all.count?stat.all.perfect/stat.all.count:null;
+      if(key==="timeouts"||key==="errors")return stat[key];
+      if(key==="coverage")return stat.coverage;
+      return stat[key];
+    }
+
+    function renderComparison() {
+      const target=$("comparisonTable"), {key,dir}=state.compareSort;
+      const stats=comparisonStats();
+      stats.sort((a,b)=>{
+        const av=comparisonSortValue(a,key),bv=comparisonSortValue(b,key);
+        if(typeof av==="string"||typeof bv==="string")return String(av??"").localeCompare(String(bv??""))*dir;
+        const primary=((av??-Infinity)-(bv??-Infinity))*dir;
+        return primary||((b.suite.score??-1)-(a.suite.score??-1))||((b.all.score??-1)-(a.all.score??-1))||a.model.localeCompare(b.model);
+      });
+      document.querySelectorAll("[data-compare-sort]").forEach(th=>th.setAttribute("aria-sort",th.dataset.compareSort===key?(dir<0?"descending":"ascending"):"none"));
+      $("comparisonBadge").textContent=`${stats.length} model${stats.length===1?"":"s"} · sorted by ${key}`;
+      if(!stats.length){target.innerHTML=`<tr><td colspan="20"><div class="chart-empty">No model records in view</div></td></tr>`;$("comparisonNote").textContent="";return;}
+      stats.forEach((stat,index)=>{
+        const neighbors=[stats[index-1],stats[index+1]].filter(Boolean);
+        stat.ciOverlap=neighbors.some(other=>stat.suite.lo!=null&&stat.suite.hi!=null&&other.suite.lo!=null&&other.suite.hi!=null&&Math.max(stat.suite.lo,other.suite.lo)<=Math.min(stat.suite.hi,other.suite.hi));
+      });
+      target.innerHTML=stats.map((stat,index)=>{
+        const perfectRate=stat.all.count?stat.all.perfect/stat.all.count:null;
+        const legacyText=state.selectedSuite===CALIBRATED_SUITE&&stat.legacy.count?` · legacy ${pct(stat.legacy.score,0)} (${stat.legacy.count}/${stat.legacy.planned})`:"";
+        return `<tr>
+          <td class="comparison-rank">${index+1}</td>
+          <td class="comparison-model"><strong title="${esc(stat.model)}">${modelHTML(stat.model)}</strong><span>${stat.tasks.length}/${stat.coverageTotal} valid tasks${legacyText}</span></td>
+          ${comparisonScoreCell(stat.suite,true,stat.ciOverlap)}
+          ${CATEGORY_ORDER.map(category=>comparisonScoreCell(stat.categories[category])).join("")}
+          ${comparisonScoreCell(stat.frontier)}
+          <td class="comparison-score ${scoreBand(perfectRate)}"><strong>${pct(perfectRate,1)}</strong><span>${stat.all.perfect} / ${stat.all.count}</span></td>
+          <td class="comparison-number">${stat.timeouts}<span>${stat.truncated} trunc.</span></td>
+          <td class="comparison-number">${stat.errors}<span>parse/infra</span></td>
+          <td class="comparison-number">${fmt(stat.output,0)}<span>tokens</span></td>
+          <td class="comparison-number">${fmt(stat.pp,1)}<span>prompt</span></td>
+          <td class="comparison-number">${fmt(stat.tg,1)}</td>
+          <td class="comparison-number">${stat.runtime?humanDuration(stat.runtime):"—"}</td>
+        </tr>`;
+      }).join("");
+      const frontierCount=uniq(state.rows.filter(r=>primaryRow(r)&&taskTier(r)==="frontier").map(r=>`${r.category}\u0000${r.task_id}`)).length;
+      $("comparisonNote").textContent=`Suite ${state.selectedSuite} macro-averages the selected categories. Non-quality states are excluded rather than becoming silent zeros; N shortfalls and timeout/parser/infra counts stay visible. Intervals are 95% task-bootstrap intervals, and ≈ marks overlapping adjacent intervals. Frontier is the stable ${frontierCount}-task high-difficulty slice in this view. Different suite versions are never mixed.`;
+    }
+
+    function renderLeaderboard() {
+      const stats = groupStats().sort((a,b)=>(b.suite??-1)-(a.suite??-1)||(b.score??-1)-(a.score??-1)||(b.tg??-1)-(a.tg??-1));
+      $("leaderBadge").textContent = `${stats.length} model${stats.length===1?"":"s"}`;
+      if (!stats.length) return empty($("leaderboard"), "No records match these filters");
+      let lastScore=null,lastRank=0;
+      $("leaderboard").innerHTML = `<div class="leader-list">${stats.map((s,i)=>{const tiedBefore=lastScore!=null&&Math.abs(s.suite-lastScore)<.0005,rank=tiedBefore?lastRank:i+1;if(!tiedBefore){lastScore=s.suite;lastRank=rank;}const tieCount=stats.filter(x=>Math.abs(x.suite-s.suite)<.0005).length;return `<div class="leader-row"><div class="leader-name"><strong title="${esc(s.model)}">${rank}. ${modelHTML(s.model)}</strong><small>${pct(s.score,1)} attempted · ${s.tasks.length} tasks · ${pct(s.coverage,0)} coverage · tg ${fmt(s.tg,1)}${tieCount>1?" · suite tie":""}</small></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(0,(s.suite??0)*100)}%"></div></div><div class="leader-score">${pct(s.suite,0)}<small> suite</small></div></div>`;}).join("")}</div>`;
+    }
+
+    function heatColor(score) {
+      if (score == null) return "rgba(255,255,255,.025)";
+      if (score >= .95) return "rgba(66,245,141,.20)";
+      if (score >= .85) return "rgba(168,240,106,.18)";
+      if (score >= .75) return "rgba(255,228,92,.18)";
+      if (score >= .65) return "rgba(255,159,67,.19)";
+      return "rgba(255,82,109,.20)";
+    }
+
+    function renderCategoryMatrix() {
+      const models = groupStats().sort((a,b)=>(b.suite??-1)-(a.suite??-1)||(b.score??-1)-(a.score??-1)||(b.tg??-1)-(a.tg??-1)).map(s=>s.model);
+      const observed = new Set(state.allRows.map(r=>r.category));
+      const cats = uniq([
+        ...CATEGORY_ORDER.filter(c => !observed.has(c) || state.selectedCategories.has(c)),
+        ...state.rows.filter(primaryRow).map(r=>r.category)
+      ]).sort(byCat);
+      if (!models.length || !cats.length) return empty($("categoryMatrix"), "No category data in view");
+      let html = `<div class="matrix-wrap"><div class="matrix" style="grid-template-columns:minmax(180px,1fr) repeat(${cats.length},minmax(76px,.7fr))"><div></div>${cats.map(c=>`<div class="matrix-label matrix-head">${esc(c)}</div>`).join("")}`;
+      models.forEach(m => {
+        html += `<div class="matrix-label" title="${esc(m)}">${esc(m)}</div>`;
+        cats.forEach(c => {
+          const rs = state.rows.filter(r=>primaryRow(r)&&r.model===m && r.category===c); const v=mean(rs.map(r=>r.score));
+          html += v == null ? `<div class="heat-cell empty">—</div>` : `<div class="heat-cell" data-tip="${esc(`${m}\n${c}: ${pct(v,1)}\n${rs.length} task records`)}" style="background:${heatColor(v)};color:${scoreTextColor(v)}">${pct(v,0)}</div>`;
+        });
+      });
+      $("categoryMatrix").innerHTML = html + `</div></div>`; wireTips($("categoryMatrix"));
+    }
+
+    function componentValue(detail,name) {
+      const match=String(detail||"").match(new RegExp(`(?:^|\\s)${name}=([01](?:\\.\\d+)?)`,`i`));
+      return match?Number(match[1]):null;
+    }
+
+    function renderGroupedMetricBars(target, rows, series, badge, emptyMessage) {
+      if(!rows.length){if(badge)badge.textContent="not run";return empty(target,emptyMessage);}
+      const width=760,left=205,right=42,top=34,bottom=44,rowH=Math.max(72,series.length*15+26);
+      const height=Math.max(285,top+bottom+rows.length*rowH),plotW=width-left-right;
+      target.innerHTML="";
+      const svg=svgEl("svg",{viewBox:`0 0 ${width} ${height}`,class:"svg-chart",role:"img"});target.appendChild(svg);
+      [0,.25,.5,.75,1].forEach(v=>{
+        const x=left+v*plotW;
+        svg.appendChild(svgEl("line",{x1:x,y1:top-8,x2:x,y2:height-bottom,stroke:"rgba(0,246,255,.09)","stroke-width":1}));
+        svg.appendChild(svgEl("text",{x,y:height-14,fill:"#626a88","font-size":8,"text-anchor":"middle"},`${v*100}%`));
+      });
+      rows.forEach((row,i)=>{
+        const y0=top+i*rowH;
+        svg.appendChild(svgEl("text",{x:left-10,y:y0+9,fill:"#b5bdd8","font-size":row.model.length>34?6.5:8,"text-anchor":"end"},row.model));
+        series.forEach((s,j)=>{
+          const y=y0+18+j*14,value=row[s.key];
+          svg.appendChild(svgEl("text",{x:left-10,y:y+8,fill:s.color,"font-size":9,"text-anchor":"end"},s.short));
+          svg.appendChild(svgEl("rect",{x:left,y,width:plotW,height:9,rx:4.5,fill:"rgba(255,255,255,.045)"}));
+          if(value!=null){
+            const g=svgEl("g",{class:"tip","data-tip":`${row.model}\n${s.label}: ${pct(value,1)}\n${row.count} task record${row.count===1?"":"s"}`});
+            g.appendChild(svgEl("rect",{x:left,y,width:Math.max(1,value*plotW),height:9,rx:4.5,fill:s.color,opacity:.82}));
+            svg.appendChild(g);
+          }
+        });
+      });
+      const legend=document.createElement("div");legend.className="legend";
+      series.forEach(s=>{const item=document.createElement("span");item.className="legend-item";
+        item.innerHTML=`<i class="legend-dot" style="background:${s.color}"></i>${esc(s.label)}`;legend.appendChild(item);});
+      target.appendChild(legend);wireTips(target);
+    }
+
+    function renderAgentic() {
+      const target=$("agenticChart"),badge=$("agenticBadge"),agentRows=state.rows.filter(r=>primaryRow(r)&&r.category==="agentic");
+      const models=uniq(agentRows.map(r=>r.model));
+      const rows=models.map(model=>{
+        const rs=agentRows.filter(r=>r.model===model);
+        return {model,count:rs.length,overall:mean(rs.map(r=>r.score)),
+          outcome:finiteMean(rs.map(r=>componentValue(r.detail,"outcome"))),
+          process:finiteMean(rs.map(r=>componentValue(r.detail,"process"))),
+          safety:finiteMean(rs.map(r=>componentValue(r.detail,"safety")))};
+      }).sort((a,b)=>(b.overall??-1)-(a.overall??-1));
+      badge.textContent=agentRows.length?`${agentRows.length} trajectory record${agentRows.length===1?"":"s"}`:"not run";
+      renderGroupedMetricBars(target,rows,[
+        {key:"overall",label:"Agentic score",short:"ALL",color:"#00f6ff"},
+        {key:"outcome",label:"Final outcome",short:"OUT",color:"#c7f36b"},
+        {key:"process",label:"Process",short:"PROC",color:"#9d5cff"},
+        {key:"safety",label:"Safety",short:"SAFE",color:"#ffdf5d"}
+      ],badge,"Run the agentic category to compare\nfinal state, process, and safety");
+    }
+
+    function renderCompliance() {
+      const target=$("complianceChart"),badge=$("complianceBadge"),all=state.rows.filter(r=>primaryRow(r)&&r.category==="compliance");
+      const models=uniq(all.map(r=>r.model));
+      const rows=models.map(model=>{
+        const rs=all.filter(r=>r.model===model);
+        const value=behavior=>mean(rs.filter(r=>COMPLIANCE_BEHAVIOR[behavior].has(r.task_id)).map(r=>r.score));
+        const comply=value("comply"),refuse=value("refuse"),clarify=value("clarify");
+        return {model,count:rs.length,comply,refuse,clarify,
+          balanced:finiteMean([comply,refuse,clarify])};
+      }).sort((a,b)=>(b.balanced??-1)-(a.balanced??-1));
+      badge.textContent=all.length?`${all.length} paired record${all.length===1?"":"s"}`:"not run";
+      renderGroupedMetricBars(target,rows,[
+        {key:"balanced",label:"Balanced",short:"BAL",color:"#00f6ff"},
+        {key:"comply",label:"Authorized comply",short:"DO",color:"#c7f36b"},
+        {key:"refuse",label:"Policy refuse",short:"NO",color:"#ff5c93"},
+        {key:"clarify",label:"Targeted clarify",short:"ASK",color:"#9d5cff"}
+      ],badge,"Run the compliance category to compare\nauthorized action, refusal, and clarification");
+    }
+
+    function renderApplied() {
+      const target=$("appliedChart"),badge=$("appliedBadge"),all=state.rows.filter(r=>primaryRow(r)&&r.category==="applied");
+      const models=uniq(all.map(r=>r.model));
+      const rows=models.map(model=>{
+        const rs=all.filter(r=>r.model===model);
+        const value=domain=>mean(rs.filter(r=>APPLIED_DOMAIN[domain].has(r.task_id)).map(r=>r.score));
+        return {model,count:rs.length,overall:mean(rs.map(r=>r.score)),data:value("data_analysis"),
+          language:value("language"),science:value("science"),calibration:value("calibration")};
+      }).sort((a,b)=>(b.overall??-1)-(a.overall??-1));
+      badge.textContent=all.length?`${all.length} applied record${all.length===1?"":"s"}`:"not run";
+      renderGroupedMetricBars(target,rows,[
+        {key:"overall",label:"Applied score",short:"ALL",color:"#00f6ff"},
+        {key:"data",label:"Data analysis",short:"DATA",color:"#c7f36b"},
+        {key:"language",label:"Language",short:"LANG",color:"#9d5cff"},
+        {key:"science",label:"Science",short:"SCI",color:"#ffe600"},
+        {key:"calibration",label:"Calibration",short:"CAL",color:"#ff5c93"}
+      ],badge,"Run the applied category to compare\ndata, language, science, and calibration");
+    }
+
+    function renderFinance() {
+      const target=$("financeChart"),badge=$("financeBadge"),all=state.rows.filter(r=>primaryRow(r)&&r.category==="finance");
+      const models=uniq(all.map(r=>r.model));
+      const rows=models.map(model=>{
+        const rs=all.filter(r=>r.model===model);
+        const value=domain=>mean(rs.filter(r=>FINANCE_DOMAIN[domain].has(r.task_id)).map(r=>r.score));
+        return {model,count:rs.length,overall:mean(rs.map(r=>r.score)),accounting:value("accounting"),
+          valuation:value("valuation"),risk:value("portfolio_risk"),research:value("research_judgment"),trading:value("algorithmic_trading")};
+      }).sort((a,b)=>(b.overall??-1)-(a.overall??-1));
+      badge.textContent=all.length?`${all.length} finance record${all.length===1?"":"s"}`:"not run";
+      renderGroupedMetricBars(target,rows,[
+        {key:"overall",label:"Finance score",short:"ALL",color:"#00f6ff"},
+        {key:"accounting",label:"Accounting",short:"ACCT",color:"#c7f36b"},
+        {key:"valuation",label:"Valuation",short:"VAL",color:"#9d5cff"},
+        {key:"risk",label:"Portfolio & risk",short:"RISK",color:"#ffe600"},
+        {key:"research",label:"Research judgment",short:"RSH",color:"#ff5c93"},
+        {key:"trading",label:"Algorithmic trading",short:"ALGO",color:"#ff8a3d"}
+      ],badge,"Run the finance category to compare\naccounting, valuation, risk, research, and algorithmic trading");
+    }
+
+    function chartFrame(target, {width=650,height=290,left=58,right=18,top=16,bottom=43,xLabel="",yLabel="",xTicks=[],yTicks=[]}) {
+      target.innerHTML = "";
+      const svg = svgEl("svg", {viewBox:`0 0 ${width} ${height}`, class:"svg-chart", role:"img"}); target.appendChild(svg);
+      const plot={x:left,y:top,w:width-left-right,h:height-top-bottom};
+      yTicks.forEach(t => { const y=plot.y+plot.h-(t.pos*plot.h); svg.appendChild(svgEl("line",{x1:plot.x,y1:y,x2:plot.x+plot.w,y2:y,stroke:"rgba(0,246,255,.10)","stroke-width":1})); svg.appendChild(svgEl("text",{x:plot.x-9,y:y+3,fill:"#626a88","font-size":8,"text-anchor":"end"},t.label)); });
+      xTicks.forEach(t => { const x=plot.x+t.pos*plot.w; svg.appendChild(svgEl("text",{x,y:plot.y+plot.h+17,fill:"#626a88","font-size":8,"text-anchor":"middle"},t.label)); });
+      if (xLabel) svg.appendChild(svgEl("text",{x:plot.x+plot.w/2,y:height-5,fill:"#626a88","font-size":8,"text-anchor":"middle","letter-spacing":1},xLabel.toUpperCase()));
+      if (yLabel) svg.appendChild(svgEl("text",{x:11,y:plot.y+plot.h/2,fill:"#626a88","font-size":8,"text-anchor":"middle",transform:`rotate(-90 11 ${plot.y+plot.h/2})`,"letter-spacing":1},yLabel.toUpperCase()));
+      return {svg,plot};
+    }
+
+    function renderPareto() {
+      const target=$("paretoChart"); const stats=groupStats().filter(s=>s.suite!=null&&s.tg!=null);
+      if (!stats.length) return empty(target,"Need both scores and tg_tps values\nfor the Pareto view");
+      const maxX=Math.max(...stats.map(s=>s.tg))*1.12 || 1;
+      const xt=[0,.25,.5,.75,1].map(p=>({pos:p,label:fmt(maxX*p,0)}));
+      const minScore=Math.min(...stats.map(s=>s.suite)),maxScore=Math.max(...stats.map(s=>s.suite)),flat=Math.abs(maxScore-minScore)<.001,minY=Math.max(0,flat?maxScore-.10:minScore-.08);
+      const yt=[0,.5,1].map(p=>({pos:p,label:pct(minY+(1-minY)*p,0)}));
+      const {svg,plot}=chartFrame(target,{top:34,xLabel:"median generation tokens / sec",yLabel:"suite score",xTicks:xt,yTicks:yt});
+      const mx=median(stats.map(s=>s.tg)), my=median(stats.map(s=>s.suite));
+      const yScale=v=>(v-minY)/Math.max(.0001,1-minY),mxp=plot.x+(mx/maxX)*plot.w, myp=plot.y+plot.h-yScale(my)*plot.h;
+      svg.appendChild(svgEl("line",{x1:mxp,y1:plot.y,x2:mxp,y2:plot.y+plot.h,stroke:"rgba(255,43,214,.34)","stroke-dasharray":"4 5"}));
+      if(!flat)svg.appendChild(svgEl("line",{x1:plot.x,y1:myp,x2:plot.x+plot.w,y2:myp,stroke:"rgba(255,43,214,.34)","stroke-dasharray":"4 5"}));
+      if(flat)svg.appendChild(svgEl("text",{x:plot.x+plot.w/2,y:plot.y+24,fill:"#92a09b","font-size":8,"text-anchor":"middle","letter-spacing":1},`QUALITY TIE AT ${pct(maxScore,0)} · SPEED IS THE DIFFERENTIATOR`));
+      const ordered=stats.sort((a,b)=>b.suite-a.suite||(b.tg??0)-(a.tg??0));
+      ordered.forEach((s,i)=>{
+        const x=plot.x+(s.tg/maxX)*plot.w, y=plot.y+plot.h-yScale(s.suite)*plot.h, color=modelColor(s.model);
+        const g=svgEl("g",{class:"tip","data-tip":`${s.model}\nsuite ${pct(s.suite,1)}\nattempted ${pct(s.score,1)}\ngeneration ${fmt(s.tg,1)} t/s`});
+        g.appendChild(svgEl("circle",{cx:x,cy:y,r:9,fill:"#070914",stroke:color,"stroke-width":2}));
+        g.appendChild(svgEl("text",{x,y:y+3,fill:color,"font-size":8,"font-weight":700,"text-anchor":"middle"},String(i+1)));
+        svg.appendChild(g);
+      }); addLegend(target,ordered.map(s=>s.model),true);wireTips(target);
+    }
+
+    function renderSpeed() {
+      const target=$("speedChart"); const stats=groupStats().filter(s=>s.pp!=null||s.tg!=null).sort((a,b)=>(b.tg??0)-(a.tg??0));
+      if (!stats.length) return empty(target,"No throughput fields in current view");
+      const width=650, rowH=Math.max(26,Math.min(38,210/stats.length)), height=Math.max(285,72+stats.length*rowH), left=210,right=42,top=28,bottom=34;
+      target.innerHTML=""; const svg=svgEl("svg",{viewBox:`0 0 ${width} ${height}`,class:"svg-chart"}); target.appendChild(svg);
+      const w=width-left-right, maxPP=Math.max(...stats.map(s=>s.pp??0),1), maxTG=Math.max(...stats.map(s=>s.tg??0),1);
+      stats.forEach((s,i)=>{
+        const y=top+i*rowH;
+        svg.appendChild(svgEl("text",{x:left-9,y:y+12,fill:"#b5bdd8","font-size":s.model.length>34?6.5:8,"text-anchor":"end"},s.model));
+        svg.appendChild(svgEl("rect",{x:left,y:y+2,width:w,height:5,rx:3,fill:"rgba(255,255,255,.045)"}));
+        if(s.pp!=null) svg.appendChild(svgEl("rect",{x:left,y:y+2,width:(s.pp/maxPP)*w,height:5,rx:3,fill:"#00f6ff"}));
+        svg.appendChild(svgEl("rect",{x:left,y:y+11,width:w,height:5,rx:3,fill:"rgba(255,255,255,.045)"}));
+        if(s.tg!=null) svg.appendChild(svgEl("rect",{x:left,y:y+11,width:(s.tg/maxTG)*w,height:5,rx:3,fill:"#ff2bd6"}));
+        svg.appendChild(svgEl("text",{x:left+w+7,y:y+7,fill:"#00f6ff","font-size":7},fmt(s.pp,0)));
+        svg.appendChild(svgEl("text",{x:left+w+7,y:y+16,fill:"#ff2bd6","font-size":7},fmt(s.tg,1)));
+      });
+      svg.appendChild(svgEl("text",{x:left,y:height-6,fill:"#626a88","font-size":7},`PP SCALE 0—${fmt(maxPP,0)}  ·  TG SCALE 0—${fmt(maxTG,1)}  (independent)`));
+    }
+
+    function parseDepth(task) { const m=/^needle_(\d+)_([0-9]+)$/.exec(task); return m ? {depth:+m[1],pos:+m[2]} : null; }
+    function renderLongctx() {
+      const target=$("longctxChart"); const rows=state.rows.filter(r=>primaryRow(r)&&r.category==="longctx"&&parseDepth(r.task_id));
+      if (!rows.length) return empty(target,"Select longctx to see depth reliability");
+      const depths=uniq(rows.map(r=>parseDepth(r.task_id).depth)).sort((a,b)=>a-b), models=uniq(rows.map(r=>r.model)).sort();
+      const maxD=Math.max(...depths), minD=Math.min(...depths), span=Math.max(1,maxD-minD);
+      const xt=depths.map(d=>({pos:(d-minD)/span,label:d>=1024?`${Math.round(d/1024)}k`:d}));
+      const yt=[0,.25,.5,.75,1].map(p=>({pos:p,label:`${p*100}%`}));
+      const {svg,plot}=chartFrame(target,{xLabel:"approx prompt depth",yLabel:"needle accuracy",xTicks:xt,yTicks:yt});
+      models.forEach((m,i)=>{
+        const pts=depths.map(d=>{ const rs=rows.filter(r=>r.model===m&&parseDepth(r.task_id).depth===d); return {d,v:mean(rs.map(r=>r.score)),n:rs.length}; }).filter(p=>p.v!=null);
+        if (!pts.length) return; const color=modelColor(m);
+        const coords=pts.map(p=>({x:plot.x+((p.d-minD)/span)*plot.w,y:plot.y+plot.h-p.v*plot.h,...p}));
+        if(coords.length>1) svg.appendChild(svgEl("path",{d:coords.map((p,j)=>`${j?"L":"M"}${p.x},${p.y}`).join(" "),fill:"none",stroke:color,"stroke-width":2,"stroke-linejoin":"round"}));
+        coords.forEach(p=>{const g=svgEl("g",{class:"tip","data-tip":`${m}\n${fmt(p.d/1024,0)}k: ${pct(p.v,0)}\n${p.n} position sample${p.n===1?"":"s"}`});g.appendChild(svgEl("circle",{cx:p.x,cy:p.y,r:4.5,fill:"#070914",stroke:color,"stroke-width":2}));svg.appendChild(g);});
+      });
+      addLegend(target,models); wireTips(target);
+    }
+
+    function dayKey(d) { return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0,10); }
+    function renderTrend() {
+      const target=$("trendChart"); const valid=state.rows.filter(r=>primaryRow(r)&&dayKey(r._date)); const days=uniq(valid.map(r=>dayKey(r._date))).sort(), models=uniq(valid.map(r=>r.model)).sort();
+      if (!valid.length || days.length<2) {
+        const allDays=uniq(state.allRows.map(r=>dayKey(r._date)).filter(Boolean)).sort();
+        const message=allDays.length<2
+          ? `History needs records from at least two UTC dates\nCurrent file contains ${allDays[0]||"no valid dates"}\nAppend a later run with --no-resume`
+          : $("attemptPolicy").value!=="all"
+            ? `Select “All attempts” above to retain repeated runs over time\nLatest per task intentionally removes older attempts`
+            : `Widen the date range to include at least two UTC dates`;
+        return empty(target,message);
+      }
+      const xt=days.map((d,i)=>({pos:days.length===1?.5:i/(days.length-1),label:i===0||i===days.length-1||days.length<=5?d.slice(5):""}));
+      const yt=[0,.25,.5,.75,1].map(p=>({pos:p,label:`${p*100}%`})); const {svg,plot}=chartFrame(target,{xLabel:"UTC completion date",yLabel:"daily task score",xTicks:xt,yTicks:yt});
+      models.forEach((m,i)=>{ const pts=days.map((d,j)=>{const rs=valid.filter(r=>r.model===m&&dayKey(r._date)===d);return {j,v:mean(rs.map(r=>r.score)),n:rs.length};}).filter(p=>p.v!=null); const color=modelColor(m); const coords=pts.map(p=>({x:plot.x+(p.j/(days.length-1))*plot.w,y:plot.y+plot.h-p.v*plot.h,...p})); if(coords.length>1)svg.appendChild(svgEl("path",{d:coords.map((p,j)=>`${j?"L":"M"}${p.x},${p.y}`).join(" "),fill:"none",stroke:color,"stroke-width":2})); coords.forEach(p=>svg.appendChild(svgEl("circle",{cx:p.x,cy:p.y,r:3.5,fill:color}))); });
+      addLegend(target,models);
+    }
+
+    function addLegend(target, labels, numbered=false) {
+      const legend=document.createElement("div"); legend.className=`legend${numbered?" pareto-legend":""}`; labels.forEach((l,i)=>{const item=document.createElement("span");item.className="legend-item";item.innerHTML=`<i class="legend-dot" style="background:${modelColor(l)};color:${modelColor(l)}"></i>${numbered?`<b class="legend-index">${i+1}.</b>`:""}<span>${esc(l)}</span>`;legend.appendChild(item);}); target.appendChild(legend);
+    }
+
+    function renderTaskMatrix() {
+      const scoredRows=state.rows.filter(primaryRow), target=$("taskMatrix"), models=uniq(scoredRows.map(r=>r.model)).sort(), tasks=uniq(scoredRows.map(r=>`${r.category}\u0000${r.task_id}`)).sort((a,b)=>{const [ac,at]=a.split("\u0000"),[bc,bt]=b.split("\u0000");return byCat(ac,bc)||at.localeCompare(bt);});
+      const evidenceBtn=$("taskEvidenceBtn"); evidenceBtn.disabled=!models.length||!tasks.length;
+      if(!models.length||!tasks.length)return empty(target,"No task records in view");
+      const available=Math.max(320,target.clientWidth-40), columnWidth=Math.max(44,Math.min(72,Math.floor((available-190-(models.length*3))/models.length)));
+      let html=`<div class="matrix-wrap"><div class="matrix" style="grid-template-columns:190px repeat(${models.length},${columnWidth}px)"><div></div>${models.map(m=>`<div class="matrix-label matrix-head" title="${esc(m)}">${esc(m)}</div>`).join("")}`;
+      let lastCat="";
+      tasks.forEach(key=>{const [cat,task]=key.split("\u0000"),taskRows=scoredRows.filter(r=>r.category===cat&&r.task_id===task),graded=GRADED_TASKS.has(task)||taskRows.some(r=>r.score>.001&&r.score<.999); const section=cat!==lastCat?`<span class="task-section">${esc(cat)}</span>&nbsp;`:"";lastCat=cat;html+=`<div class="matrix-label" title="${esc(task)}">${section}${esc(task)}</div>`;models.forEach(m=>{const rs=taskRows.filter(r=>r.model===m),v=mean(rs.map(r=>r.score));if(v==null)html+=`<div class="heat-cell empty">—</div>`;else{const details=uniq(rs.map(r=>r.detail)).slice(0,3).join(" | "),caseRow=[...rs].sort((a,b)=>a.score-b.score||b._index-a._index)[0],label=graded?pct(v,0):v>=.999?"Pass":v<=.001?"Fail":pct(v,0);html+=`<div class="heat-cell evidence-cell" tabindex="0" role="button" aria-label="${esc(`${m}, ${cat} ${task}, ${label}; open evidence`)}" data-row-index="${caseRow._index}" style="background:${heatColor(v)};color:${scoreTextColor(v)}" data-tip="${esc(`${m}\n${cat} / ${task}\nscore ${pct(v,1)}\n${details}\nclick for full evidence`)}">${label}</div>`;}});});
+      target.innerHTML=html+`</div></div>`; wireTips(target); wireEvidenceButtons(target);
+    }
+
+    function openTaskEvidence() {
+      const row=[...state.rows].sort((a,b)=>a.score-b.score||(b.completion_tokens??0)-(a.completion_tokens??0)||b._index-a._index)[0];
+      if(!row)return showToast("No task evidence in the current view");
+      openEvidence(row._index);
+    }
+
+    function reasonType(row) {
+      const d=String(row.detail||"").toLowerCase();
+      if(row.result_state==="timeout")return {key:"timeout",label:"Timeout",color:"#ff9f43"};
+      if(row.result_state==="truncated")return {key:"truncated",label:"Response truncation",color:"#ff6bff"};
+      if(row.result_state==="parse_error")return {key:"parse_error",label:"Response parse error",color:"#ff6bff"};
+      if(row.result_state==="infra_error")return {key:"infra_error",label:"Infrastructure / model load",color:"#9d5cff"};
+      if(row.result_state==="context_overflow")return {key:"context_overflow",label:"Context overflow",color:"#ff9f43"};
+      if(row.score>=.999&&d==="pass")return {key:"pass",label:"Pass",color:"#00f6ff"};
+      if(d.includes("request error")||d.includes("timeout"))return {key:"request",label:"Request / timeout",color:"#9d5cff"};
+      if(d.includes("exhausted")||d.includes("final answer was empty")||d.includes("empty response"))return {key:"budget",label:"Generation / token budget",color:"#ff6bff"};
+      if(d.includes("crash")||d.includes("tests passed")||d.includes("code block"))return {key:"coding",label:"Code execution",color:"#00c8ff"};
+      if(d.includes("tool")||d.includes("extraction")||d.includes("fabricat")||d.includes("calling"))return {key:"tools",label:"Tool behavior",color:"#00ff9d"};
+      if(d.includes("partial")||d.includes("extra keys")||d.includes("bad arg")||d.includes("unclear"))return {key:"partial",label:"Partial credit",color:"#ffe600"};
+      if(d.includes("expected")||d.includes("got ")||d.includes("invalid")||d.includes("wrong")||d.includes("no number")||d.includes("words"))return {key:"incorrect",label:"Incorrect answer",color:"#ff3b81"};
+      return row.score>=.999?{key:"pass",label:"Pass",color:"#00f6ff"}:{key:"other",label:"Other evaluator result",color:"#ff6bff"};
+    }
+
+    function renderDiagnostics() {
+      const rows=state.rows, coverage=transcriptCoverage(rows), groups=new Map(), details=new Map();
+      rows.forEach(r=>{const t=reasonType(r);if(!groups.has(t.key))groups.set(t.key,{...t,count:0});groups.get(t.key).count++;details.set(r.detail,(details.get(r.detail)||0)+1);});
+      $("transcriptBadge").textContent=state.transcripts.length?`${coverage.linked}/${coverage.total} answers linked`:"answers not loaded";
+      if(!rows.length){empty($("reasonBreakdown"),"No evaluator reasons in view");empty($("caseFiles"),"No case files in view");return;}
+      const ordered=[...groups.values()].sort((a,b)=>b.count-a.count), max=Math.max(...ordered.map(g=>g.count),1);
+      const topDetails=[...details].sort((a,b)=>b[1]-a[1]).slice(0,3).map(([d,n])=>`${n}× ${d}`).join(" · ");
+      $("reasonBreakdown").innerHTML=`<div class="reason-list">${ordered.map(g=>`<div class="reason-row"><div class="reason-name" title="${esc(g.label)}">${esc(g.label)}</div><div class="reason-track"><div class="reason-fill" style="--reason-color:${g.color};width:${g.count/max*100}%"></div></div><div class="reason-count">${g.count}</div></div>`).join("")}</div><div class="reason-detail"><strong style="color:var(--muted)">MOST COMMON EXACT REASONS</strong><br>${esc(topDetails||"—")}</div>`;
+      const failures=rows.filter(r=>r.score<.999), cases=(failures.length?failures:[...rows].sort((a,b)=>(b.completion_tokens??0)-(a.completion_tokens??0))).sort((a,b)=>a.score-b.score||(b.completion_tokens??0)-(a.completion_tokens??0)).slice(0,8);
+      $("caseTitle").textContent=failures.length?"Priority case files":"Response review";
+      $("caseNote").textContent=failures.length?`${failures.length} non-perfect outcomes`:"all selected outcomes are perfect";
+      $("caseFiles").innerHTML=cases.map(r=>{const t=r._transcript, chars=t?String(t.content||"").length:0, reasoningChars=t?String(t.reasoning_content||"").length:0, calls=t?.tool_calls?.length||0;return `<button class="case-file" type="button" data-row-index="${r._index}"><span class="case-top"><span class="case-model" title="${esc(r.model)}">${esc(r.model)}</span><span class="score-pill ${scoreClass(r.score)}">${pct(r.score,0)}</span></span><span class="case-task">${esc(r.category)} / ${esc(r.task_id)}</span><span class="case-reason">${esc(r.detail)}</span><span class="case-evidence">${t?`${chars.toLocaleString()} final chars${reasoningChars?` · ${reasoningChars.toLocaleString()} reasoning chars`:""} · ${calls} tool call${calls===1?"":"s"}`:"answer not linked"}<span>↗ open</span></span></button>`;}).join("");
+      wireEvidenceButtons($("caseFiles"));
+    }
+
+    function wireEvidenceButtons(target) {
+      target.querySelectorAll("[data-row-index]").forEach(el=>{
+        const open=()=>openEvidence(Number(el.dataset.rowIndex));el.addEventListener("click",open);el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}});
+      });
+    }
+
+    function openEvidence(index) {
+      const row=state.allRows.find(r=>r._index===index);if(!row)return;state.drawerRow=row;
+      const t=row._transcript, type=reasonType(row), calls=t?.tool_calls||[], response=t?String(t.content||""):"", reasoningChars=t?String(t.reasoning_content||"").length:0;
+      $("drawerTitle").textContent=`${row.model} · ${row.task_id}`;
+      $("drawerContent").innerHTML=`
+        <div class="drawer-scoreline"><span class="drawer-score" style="color:${type.color}">${pct(row.score,0)}</span><span class="meta-tag">${esc(row.category)}</span><span class="meta-tag">${esc(formatDate(row._date))}</span>${t?'<span class="meta-tag" style="color:var(--mint)">answer linked</span>':'<span class="meta-tag" style="color:var(--amber)">detail only</span>'}${t?.finish_reason?`<span class="meta-tag">finish: ${esc(t.finish_reason)}</span>`:""}</div>
+        <div class="reason-callout" style="--reason:${type.color}"><label>Evaluator reason · ${esc(type.label)}</label><p>${esc(row.detail||"No evaluator detail recorded")}</p></div>
+        <div class="metric-strip"><div class="metric-chip"><span>Prompt tokens</span><strong>${fmt(row.prompt_tokens,0)}</strong></div><div class="metric-chip"><span>Output tokens</span><strong>${fmt(row.completion_tokens,0)}</strong></div>${t?.requested_max_tokens!=null?`<div class="metric-chip"><span>Output limit</span><strong>${fmt(num(t.requested_max_tokens),0)}</strong></div>`:""}${t?.reasoning_tokens!=null||reasoningChars?`<div class="metric-chip"><span>Reasoning</span><strong>${t?.reasoning_tokens!=null?`${fmt(num(t.reasoning_tokens),0)} tok`:`${reasoningChars.toLocaleString()} chars`}</strong></div>`:""}<div class="metric-chip"><span>Prompt t/s</span><strong>${fmt(row.pp_tps,1)}</strong></div><div class="metric-chip"><span>Generation t/s</span><strong>${fmt(row.tg_tps,1)}</strong></div><div class="metric-chip"><span>Wall time</span><strong>${row.wall_s==null?"—":humanDuration(row.wall_s)}</strong></div></div>
+        <section class="drawer-section"><div class="response-head"><label>Model's final answer</label>${t?'<button id="copyResponse" class="evidence-btn" type="button">Copy answer</button>':''}</div><pre class="response-block ${!response?'empty-response':''}">${esc(t?(response||"No textual answer. Inspect the structured tool calls below."):"Load transcripts.jsonl to view this model's full final answer.")}</pre></section>
+        ${calls.length?`<section class="drawer-section"><label>Structured tool calls · ${calls.length}</label>${calls.map((call,i)=>`<pre class="response-block tool-call">${esc(JSON.stringify(call,null,2))}</pre>`).join("")}</section>`:""}
+        ${row._transcriptAmbiguous?'<div class="ambiguity-note">This model/category/task key occurs more than once. Fleetbench pairs v2 records by run_id/replicate; older files fall back to score/detail and file order.</div>':''}`;
+      $("evidenceOverlay").classList.add("open");$("evidenceOverlay").setAttribute("aria-hidden","false");document.body.classList.add("drawer-open");
+      $("copyResponse")?.addEventListener("click",()=>copyText(response));$("drawerClose").focus();
+    }
+
+    function closeEvidence(){if(!$("evidenceOverlay").classList.contains("open"))return;$("evidenceOverlay").classList.remove("open");$("evidenceOverlay").setAttribute("aria-hidden","true");document.body.classList.remove("drawer-open");state.drawerRow=null;}
+
+    async function copyText(value){try{await navigator.clipboard.writeText(value);showToast("Answer copied to clipboard");}catch(_){const area=document.createElement("textarea");area.value=value;document.body.appendChild(area);area.select();document.execCommand("copy");area.remove();showToast("Answer copied to clipboard");}}
+
+    function renderTable() {
+      const q=$("tableSearch").value.trim().toLowerCase(); let rows=state.rows.filter(r=>(!state.failOnly||!qualityRow(r)||r.score<.999)&&(!q||`${r.timestamp} ${r.model} ${r.category} ${r.task_id} ${r.result_state} ${r.failure_type} ${r.detail} ${r._transcript?.content||""}`.toLowerCase().includes(q)));
+      const {key,dir}=state.sort; rows.sort((a,b)=>{let av=a[key],bv=b[key];if(key==="timestamp"){av=a._date.getTime();bv=b._date.getTime();}if(typeof av==="number"||typeof bv==="number")return((av??-Infinity)-(bv??-Infinity))*dir;return String(av??"").localeCompare(String(bv??""))*dir;});
+      const pages=Math.max(1,Math.ceil(rows.length/state.pageSize));state.page=Math.min(state.page,pages);const start=(state.page-1)*state.pageSize, visible=rows.slice(start,start+state.pageSize);
+      $("rowBadge").textContent=`${rows.length.toLocaleString()} rows`;
+      $("runTable").innerHTML=visible.map(r=>`<tr><td>${esc(formatDate(r._date))}</td><td class="model-cell" title="${esc(r.model)}">${esc(r.model)}</td><td>${esc(r.category)}</td><td>${esc(r.task_id)}</td><td><span class="state-pill ${esc(r.result_state)}">${esc(r.result_state)}</span></td><td><span class="score-pill ${scoreClass(r.score)}">${pct(r.score,0)}</span></td><td class="detail-cell" title="${esc(r.detail)}">${esc(r.detail)}</td><td>${fmt(r.prompt_tokens,0)}</td><td>${fmt(r.completion_tokens,0)}</td><td>${fmt(r.pp_tps,1)}</td><td>${fmt(r.tg_tps,1)}</td><td>${r.wall_s==null?'—':humanDuration(r.wall_s)}</td><td><button class="evidence-btn" type="button" data-row-index="${r._index}">${r._transcript?'Answer ↗':'Detail ↗'}</button></td></tr>`).join("");
+      $("tableCount").textContent=rows.length?`${(start+1).toLocaleString()}–${Math.min(start+state.pageSize,rows.length).toLocaleString()} of ${rows.length.toLocaleString()}`:"0 records";$("pageLabel").textContent=`${state.page} / ${pages}`;$("prevPage").disabled=state.page<=1;$("nextPage").disabled=state.page>=pages;
+      wireEvidenceButtons($("runTable"));
+    }
+
+    function renderInsights() {
+      const stats=groupStats().filter(s=>s.suite!=null).sort((a,b)=>b.suite-a.suite); const fails=state.rows.filter(r=>primaryRow(r)&&r.score<.999); const failTasks=new Map(); fails.forEach(r=>failTasks.set(r.task_id,(failTasks.get(r.task_id)||0)+1)); const hard=[...failTasks].sort((a,b)=>b[1]-a[1])[0];
+      const fastest=[...stats].filter(s=>s.tg!=null).sort((a,b)=>b.tg-a.tg)[0]; const best=stats[0]; const measured=state.allRows.filter(r=>!isRequestError(r)); const repeat=measured.length-latestPerKey(measured,"latest").length;
+      const cards=[
+        ["Quality signal",best?`${best.model} leads the current view at ${pct(best.suite,1)} coverage-aware suite score (${pct(best.score,1)} attempted-task average).`:"No quality records match the filters."],
+        ["Speed signal",fastest?`${fastest.model} has the highest selected median generation rate at ${fmt(fastest.tg,1)} t/s.`:"Generation throughput is unavailable in the current view."],
+        ["Data hygiene",repeat?`${repeat} repeated model/category/task records exist. “Latest per task” prevents repeat runs from changing task weights.`:"No repeated model/category/task keys were detected in the loaded file."],
+      ];
+      if(hard) cards[1]=["Hardest task",`${hard[0]} has ${hard[1]} non-perfect result${hard[1]===1?"":"s"} in this view. Inspect its matrix cells for failure details.`];
+      $("insights").innerHTML=cards.map(([h,p])=>`<article class="insight"><strong>${esc(h)}</strong><p>${esc(p)}</p></article>`).join("");
+    }
+
+    function empty(target,message){target.innerHTML=`<div class="chart-empty">${esc(message).replace(/\n/g,"<br>")}</div>`;}
+    function truncate(s,n){return s.length>n?s.slice(0,n-1)+"…":s;}
+    function formatDate(d){return Number.isNaN(d.getTime())?"invalid date":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"2-digit",hour:"2-digit",minute:"2-digit"});}
+    function wireTips(target){
+      target.querySelectorAll("[data-tip]").forEach(el=>{
+        if(el.dataset.tip.includes("\\n"))el.dataset.tip=el.dataset.tip.replaceAll("\\n","\n");
+        const place=(clientX,clientY)=>{
+          const gap=14, edge=12, width=Math.min(420,window.innerWidth-edge*2);
+          const x=Math.max(edge+width,Math.min(clientX-gap,window.innerWidth-edge));
+          const estimatedHeight=Math.min(window.innerHeight-edge*2,el.dataset.tip.split("\n").length*20+34);
+          let y=clientY+gap;
+          if(y+estimatedHeight>window.innerHeight-edge)y=clientY-estimatedHeight-gap;
+          y=Math.max(edge,Math.min(y,window.innerHeight-estimatedHeight-edge));
+          el.style.setProperty("--tip-x",`${x}px`);
+          el.style.setProperty("--tip-y",`${y}px`);
+        };
+        el.addEventListener("mousemove",e=>place(e.clientX,e.clientY));
+        el.addEventListener("focus",()=>{const r=el.getBoundingClientRect();place(r.left+r.width/2,r.bottom);});
+      });
+    }
+
+    function exportView() {
+      const headers=["timestamp","run_id","replicate","suite_version","benchmark_version","profile","task_set_hash","model","actual_model_id","model_file","quantization","reasoning_mode","context_size","temperature","top_p","top_k","max_output_tokens","server_version","category","task_id","task_version","variant_id","score_scope","frontier_member","task_dimension","result_state","failure_type","quality_eligible","score","detail","prompt_tokens","completion_tokens","pp_tps","tg_tps","wall_s"]; const cell=v=>{v=v??"";const s=String(v);return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;};
+      const csv=[headers.join(","),...state.rows.map(r=>headers.map(h=>cell(r[h])).join(","))].join("\n");
+      const blob=new Blob([csv],{type:"text/csv"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="fleetbench-filtered.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+
+    function resetFilters() {
+      const suiteRows=state.allRows.filter(r=>r.suite_version===state.selectedSuite);state.selectedModels=new Set(uniq(suiteRows.map(r=>r.model)));state.selectedCategories=new Set(uniq(suiteRows.map(r=>r.category)));$("globalSearch").value="";$("tableSearch").value="";$("fromDate").value=state.minDate;$("toDate").value=state.maxDate;$("attemptPolicy").value="latest";state.failOnly=false;$("failOnlyBtn").classList.remove("primary");renderChips();applyFilters();
+    }
+
+    function demoCSV() {
+      const models=["Model-A","Model-B","Model-C","Model-D","Model-E"], tasks={tools:["tool_simple_call","tool_param_precision","tool_restraint_v2","tool_selection","tool_multiturn_extract","tool_error_recovery"],agentic:["agent_repo_bugfix","agent_policy_workflow","agent_injection_resistance","agent_partial_failure"],compliance:["comply_restart_staging","comply_rotate_test_key","refuse_secret_exfiltration","refuse_disable_audit","clarify_transfer_amount","clarify_duplicate_backup"],coding:["code_rle","code_text_utilities","code_sequence_structures"],reasoning:["reason_arithmetic_bundle_v2","reason_reflection_bundle","instr_json","instr_three_words_v2"],longctx:["needle_4096_25","needle_4096_75","needle_16384_25","needle_16384_75","needle_32768_25","needle_32768_75","needle_65536_25","needle_65536_75"]};
+      const baseQ=[.91,.85,.78,.73,.82],pp=[182,241,620,903,570],tg=[8.6,11.2,24.4,34.8,28.1],out=[REQUIRED.join(",")];let k=0;
+      models.forEach((m,mi)=>Object.entries(tasks).forEach(([cat,ts])=>ts.forEach((task,ti)=>{const wobble=((mi*11+ti*7+cat.length)%13-6)/34;let score=Math.max(0,Math.min(1,baseQ[mi]+wobble));if(cat==="longctx"){const d=parseDepth(task).depth;score=(baseQ[mi]-(d/65536)*.32+wobble)>.58?1:0;}else score=score>.9?1:score>.68?(ti%3===0?.5:1):ti%2?0:.5;const day=String(10+((mi+ti)%5)).padStart(2,"0"),time=`${String(10+mi).padStart(2,"0")}:${String((ti*7)%60).padStart(2,"0")}:00Z`;const pt=cat==="longctx"?parseDepth(task).depth:120+ti*31,ct=cat==="coding"?350+ti*42:45+ti*13;const ppv=pp[mi]*(1+(((ti%5)-2)/20)),tgv=tg[mi]*(1+(((ti%4)-1.5)/18));const detail=cat==="agentic"?`outcome=${Math.min(1,score+.08).toFixed(2)} process=${Math.max(0,score-.10).toFixed(2)} safety=${Math.min(1,score+.14).toFixed(2)} efficiency=${Math.max(0,score-.04).toFixed(2)}; synthetic demo`:score===1?"pass":score===0.5?"partial result":"expected value not found";const vals=[`2026-07-${day}T${time}`,m,cat,task,score.toFixed(3),detail,pt,ct,ppv.toFixed(1),tgv.toFixed(1),(pt/ppv+ct/tgv).toFixed(2)];out.push(vals.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(","));k++;})));
+      return out.join("\n");
+    }
+
+    function demoJSONL(csvText) {
+      return parseCSV(csvText).map(r=>JSON.stringify({model:r.model,category:r.category,task_id:r.task_id,score:r.score,detail:r.detail,content:r.category==="coding"?`\u0060\u0060\u0060python\ndef solve(value):\n    # Synthetic preview response for ${r.task_id}\n    return value\n\u0060\u0060\u0060`:r.score>=.999?`Final answer for ${r.task_id}: the requested result is correct.`:`I attempted ${r.task_id}, but the final result did not fully satisfy the evaluator.`,tool_calls:r.category==="tools"&&r.task_id.includes("call")?[{type:"function",function:{name:"demo_tool",arguments:"{\"value\": 42}"},id:`demo_${r._index}`}]:[]})).join("\n");
+    }
+
+    function bind() {
+      wireTips(document.querySelector(".comparison-table"));
+      [$("loadBtn"),$("loadBtnTop")].forEach(b=>b.addEventListener("click",chooseTestSet));
+      $("fileInput").addEventListener("change",e=>readFiles(e.target.files));
+      $("transcriptBtn").addEventListener("click",()=>$("transcriptInput").click());
+      $("transcriptInput").addEventListener("change",e=>readFiles(e.target.files));
+      $("demoBtn").addEventListener("click",()=>{const csv=demoCSV();loadText(csv,"demo-runs.csv",true);loadTranscriptText(demoJSONL(csv),"demo-transcripts.jsonl");});
+      $("exportBtn").addEventListener("click",exportView);$("resetBtn").addEventListener("click",resetFilters);
+      $("globalSearch").addEventListener("input",debounce(applyFilters));$("tableSearch").addEventListener("input",debounce(()=>{state.page=1;renderTable();}));
+      $("suiteVersion").addEventListener("change",()=>{state.selectedSuite=$("suiteVersion").value;resetFilters();});
+      [$("fromDate"),$("toDate"),$("attemptPolicy")].forEach(e=>e.addEventListener("change",applyFilters));
+      document.querySelectorAll("[data-range]").forEach(b=>b.addEventListener("click",()=>{const days=+b.dataset.range;const max=$("toDate").value?new Date(`${$("toDate").value}T12:00:00`):new Date();max.setDate(max.getDate()-(days-1));$("fromDate").value=Math.max(new Date(`${state.minDate}T12:00:00`).getTime(),max.getTime())===max.getTime()?dateInput(max):state.minDate;applyFilters();}));
+      $("failOnlyBtn").addEventListener("click",()=>{state.failOnly=!state.failOnly;$("failOnlyBtn").classList.toggle("primary",state.failOnly);state.page=1;renderTable();});
+      $("prevPage").addEventListener("click",()=>{state.page--;renderTable();});$("nextPage").addEventListener("click",()=>{state.page++;renderTable();});
+      $("taskEvidenceBtn").addEventListener("click",openTaskEvidence);
+      $("drawerClose").addEventListener("click",closeEvidence);$("drawerScrim").addEventListener("click",closeEvidence);document.addEventListener("keydown",e=>{if(e.key==="Escape")closeEvidence();});
+      document.querySelectorAll("th[data-sort]").forEach(th=>th.addEventListener("click",()=>{const k=th.dataset.sort;if(state.sort.key===k)state.sort.dir*=-1;else state.sort={key:k,dir:1};renderTable();}));
+      document.querySelectorAll("th[data-compare-sort]").forEach(th=>th.addEventListener("click",()=>{const k=th.dataset.compareSort;if(k==="rank")state.compareSort={key:"suite",dir:-1};else if(state.compareSort.key===k)state.compareSort.dir*=-1;else state.compareSort={key:k,dir:k==="model"?1:-1};renderChips();renderComparison();}));
+      const dz=$("dropzone");["dragenter","dragover"].forEach(ev=>window.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("dragging");}));["dragleave","drop"].forEach(ev=>window.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("dragging");}));window.addEventListener("drop",e=>readFiles(e.dataTransfer.files));
+      window.addEventListener("resize",debounce(()=>{if(state.rows.length){renderPareto();renderSpeed();renderLongctx();renderTrend();renderTaskMatrix();}},180));
+    }
+
+    async function autoLoad() {
+      const params=new URLSearchParams(location.search);
+      if (params.has("demo")) { const csv=demoCSV();loadText(csv,"demo-runs.csv",true);loadTranscriptText(demoJSONL(csv),"demo-transcripts.jsonl");return; }
+      const savedHandles=await restoreLocalHandles();
+      if(savedHandles.length){
+        try{if(await loadFromHandles(savedHandles,false))return;}catch(_){}
+        state.localHandles=savedHandles;
+      }
+      if (location.protocol === "file:") return;
+      const candidate=params.get("csv")||"results/runs.csv";
+      try {
+        const r=await fetch(candidate,{cache:"no-store"});if(!r.ok)return;loadText(await r.text(),candidate);
+        state.localHandles=[];
+        const transcriptCandidate=params.get("transcripts")||candidate.replace(/[^/]*$/, "transcripts.jsonl");
+        try{const tr=await fetch(transcriptCandidate,{cache:"no-store"});if(tr.ok)loadTranscriptText(await tr.text(),transcriptCandidate);}catch(_){}
+        if(params.has("case"))openEvidence(Number(params.get("case")));
+      } catch (_) {}
+    }
+
+    bind(); autoLoad();
+  })();
+  </script>
+</body>
+</html>

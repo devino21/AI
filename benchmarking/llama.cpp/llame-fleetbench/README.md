@@ -1,5 +1,13 @@
 # fleetbench
 
+## Sample Dashboard
+<img width="2467" height="1267" alt="Screenshot From 2026-08-08 17-37-59" src="https://github.com/user-attachments/assets/92485c08-05dc-4f2a-b6cd-85b1d4db0732" />
+
+## EXAMPLE: Single Model Benchmark run
+<img width="1574" height="1053" alt="Screenshot From 2026-08-08 17-37-30" src="https://github.com/user-attachments/assets/9e1294d3-d510-41e7-b359-e26111f324cd" />
+
+
+
 Quality + throughput benchmark for a llama-swap model fleet. One command walks
 every model in your config, lets llama-swap handle the swaps, runs nine test
 categories, and emits a single comparison table with quality scores and
